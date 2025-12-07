@@ -365,7 +365,7 @@ class _TerminalInfoCard extends StatelessWidget {
                   label: 'Loja Aurora - Matriz',
                 ),
                 const _InfoChip(
-                  icon: Icons.serial_numbers,
+                  icon: Icons.numbers,
                   label: 'Serial 9832-4412',
                 ),
                 const _InfoChip(
@@ -457,7 +457,7 @@ class _PaymentFormCard extends StatelessWidget {
               enabled: !locked,
               decoration: const InputDecoration(
                 labelText: 'Valor da cobrança',
-                prefixText: 'R$ ',
+                prefixText: 'R\$ ',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -503,9 +503,9 @@ class _PaymentFormCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text('Gorjeta: R$ ${tipValue.toStringAsFixed(2)}'),
+                  Text('Gorjeta: R\$ ${tipValue.toStringAsFixed(2)}'),
                   Text(
-                    'Total a cobrar: R$ ${total.toStringAsFixed(2)}',
+                    'Total a cobrar: R\$ ${total.toStringAsFixed(2)}',
                     style: Theme.of(context)
                         .textTheme
                         .titleMedium
@@ -708,7 +708,7 @@ class _ReceiptRow extends StatelessWidget {
             ),
           ),
           Text(
-            'R$ ${value.toStringAsFixed(2)}',
+            'R\$ ${value.toStringAsFixed(2)}',
             style: isEmphasis
                 ? baseStyle?.copyWith(fontWeight: FontWeight.bold)
                 : baseStyle,
@@ -824,7 +824,7 @@ class _HistoryTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                'R$ ${transaction.total.toStringAsFixed(2)}',
+               'R\$ ${transaction.total.toStringAsFixed(2)}',
                 style: Theme.of(context)
                     .textTheme
                     .titleMedium
