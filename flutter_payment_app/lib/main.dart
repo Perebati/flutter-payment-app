@@ -1,6 +1,5 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
+import 'rust_gateway.dart';
 
 enum PaymentStatus {
   idle,
@@ -118,6 +117,7 @@ class _TerminalHomePageState extends State<TerminalHomePage> {
   String _statusMessage = 'Pronto para iniciar uma nova venda.';
   final List<PaymentTransaction> _history = <PaymentTransaction>[];
   bool _locked = false;
+  final RustPaymentGateway _rustGateway = RustPaymentGateway();
 
   double get _baseAmount =>
       double.tryParse(_amountController.text.replaceAll(',', '.')) ?? 0;
@@ -167,9 +167,15 @@ class _TerminalHomePageState extends State<TerminalHomePage> {
         return;
       }
 
-      final bool success = Random().nextBool();
+      final RustPaymentOutcome decision = _rustGateway.authorizePayment(
+        amount: _baseAmount,
+        tip: _tipValue,
+        methodIndex: _selectedMethod.index,
+      );
+
       final PaymentStatus finalStatus =
-          success ? PaymentStatus.approved : PaymentStatus.declined;
+          decision.approved ? PaymentStatus.approved : PaymentStatus.declined;
+      final double riskPercent = (decision.riskScore * 100).clamp(0, 100);
 
       final PaymentTransaction transaction = PaymentTransaction(
         reference: 'TRX-${DateTime.now().millisecondsSinceEpoch}',
@@ -179,10 +185,12 @@ class _TerminalHomePageState extends State<TerminalHomePage> {
         method: _selectedMethod,
         status: finalStatus,
         timestamp: DateTime.now(),
-        cardMasked: success ? '5482 •••• •••• 8821' : '4923 •••• •••• 0199',
-        issuer: success ? 'Banco Azul' : 'Banco Terra',
+        cardMasked: decision.approved
+            ? '5482 •••• •••• 8821'
+            : '4923 •••• •••• 0199',
+        issuer: decision.approved ? 'Banco Azul' : 'Banco Terra',
         message:
-            success ? 'Transação autorizada.' : 'Falha de comunicação com o emissor.',
+            '${decision.message}\n${decision.methodDescription} | Score ${riskPercent.toStringAsFixed(1)}%',
       );
 
       setState(() {
