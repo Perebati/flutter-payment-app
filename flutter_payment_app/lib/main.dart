@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
 import 'rust_gateway.dart';
 
+/// Define o estado atual de uma transação no ciclo de vida do pagamento.
+///
+/// **Rust Backend Note:**
+/// Este enum deve ser mapeado para uma máquina de estados no backend.
+/// - `idle`: Estado inicial, nenhuma ação tomada.
+/// - `processing`: Transação enviada, aguardando resposta do gateway.
+/// - `approved`: Sucesso (HTTP 200 / Code 0).
+/// - `declined`: Recusada pelo banco/emissor (HTTP 402 / Code 1).
 enum PaymentStatus {
   idle,
   awaitingCard,
@@ -10,6 +18,14 @@ enum PaymentStatus {
   cancelled,
 }
 
+/// Os métodos de entrada de dados do cartão suportados.
+///
+/// **Rust Backend Note:**
+/// Mapeado para um `u8` ou `i32` na camada de FFI.
+/// - 0: NFC (Contactless)
+/// - 1: Chip (EMV)
+/// - 2: Magnetic Stripe (Legacy)
+/// - 3: Manual Entry (Fallback)
 enum PaymentMethod {
   tap,
   chip,
@@ -17,6 +33,10 @@ enum PaymentMethod {
   manual,
 }
 
+/// Representa uma transação financeira completa e imutável.
+///
+/// Esta classe serve como a "Source of Truth" para o frontend exibir
+/// o recibo ou histórico.
 class PaymentTransaction {
   PaymentTransaction({
     required this.reference,
@@ -31,15 +51,40 @@ class PaymentTransaction {
     this.message,
   });
 
+  /// O código único de referência da transação.
+  ///
+  /// **Rust Backend Note:** Geralmente um UUID v4 gerado pelo backend.
   final String reference;
+
+  /// Valor original da compra.
+  ///
+  /// **Rust Backend Note:** Mapeado como `f64` na FFI atual.
   final double amount;
+
+  /// Valor da gorjeta adicionada.
   final double tip;
+
+  /// Soma de [amount] + [tip].
   final double total;
+
+  /// O método de captura utilizado.
   final PaymentMethod method;
+
+  /// O resultado do processamento.
   final PaymentStatus status;
+
+  /// Carimbo de tempo da transação.
+  ///
+  /// **Rust Backend Note:** Deve ser sempre serializado/tratado em UTC.
   final DateTime timestamp;
+
+  /// Os últimos 4 dígitos do cartão (ex: "**** 1234").
   final String cardMasked;
+
+  /// A bandeira do cartão (Visa, Mastercard, Elo).
   final String issuer;
+
+  /// Mensagem de retorno do adquirente (ex: "Saldo insuficiente").
   final String? message;
 
   String get formattedMethod {
@@ -152,7 +197,7 @@ class _TerminalHomePageState extends State<TerminalHomePage> {
       _locked = true;
     });
 
-    Future<void>.delayed(const Duration(seconds: 2), () {
+    Future<void>.delayed(const Duration(seconds: 0), () {
       if (!mounted || _status != PaymentStatus.awaitingCard) {
         return;
       }
@@ -162,7 +207,7 @@ class _TerminalHomePageState extends State<TerminalHomePage> {
       });
     });
 
-    Future<void>.delayed(const Duration(seconds: 5), () {
+    Future<void>.delayed(const Duration(seconds: 0), () {
       if (!mounted || _status != PaymentStatus.processing) {
         return;
       }

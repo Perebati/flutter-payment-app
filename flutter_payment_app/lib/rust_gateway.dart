@@ -3,13 +3,24 @@ import 'dart:io';
 import 'package:ffi/ffi.dart' as pkg_ffi;
 
 /// Rust struct translated to an FFI-compatible Dart representation.
+///
+/// Represents the raw result coming from the Rust `process_payment` function.
+/// It maps directly to the memory layout of the C-compatible struct defined in Rust.
+///
+/// **Rust Backend Note:**
+/// This struct MUST match the `#[repr(C)]` layout defined in `lib.rs`.
+/// Any change in the Rust struct fields order or types requires an update here.
 final class FfiPaymentResult extends ffi.Struct {
+  /// 0 = Approved, 1 = Declined, etc.
   @ffi.Int32()
   external int status;
 
+  /// A calculated risk score (0.0 to 1.0).
   @ffi.Double()
   external double riskScore;
 
+  /// A pointer to a C-string (null-terminated) allocated by Rust.
+  /// Must be freed using `free_rust_string` to avoid memory leaks.
   external ffi.Pointer<pkg_ffi.Utf8> message;
 }
 
@@ -31,6 +42,18 @@ typedef _DescribeMethodNative = ffi.Pointer<ffi.Char> Function(ffi.Int32 method)
 typedef _DescribeMethodDart = ffi.Pointer<ffi.Char> Function(int method);
 
 /// Wrapper around the Rust dynamic library used by this example.
+///
+/// This class is responsible for loading the dynamic library (`.so`, `.dll`, or `.dylib`)
+/// and binding the Dart functions to the native Rust functions using `dart:ffi`.
+///
+/// ## Example
+///
+/// ```dart
+/// final gateway = RustPaymentGateway();
+/// if (gateway.isInitialized) {
+///   print('Rust engine loaded successfully');
+/// }
+/// ```
 class RustPaymentGateway {
   RustPaymentGateway() {
     try {
