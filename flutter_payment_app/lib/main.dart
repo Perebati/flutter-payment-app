@@ -333,7 +333,7 @@ class _TerminalInfoCard extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.12),
+                    color: statusColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -799,7 +799,7 @@ class _HistoryTile extends StatelessWidget {
       child: Row(
         children: [
           CircleAvatar(
-            backgroundColor: statusColor.withOpacity(0.15),
+            backgroundColor: statusColor.withValues(alpha: 0.15),
             child: Icon(_methodIcon(transaction.method), color: statusColor),
           ),
           const SizedBox(width: 12),
@@ -889,7 +889,7 @@ class _StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
@@ -946,7 +946,7 @@ class _StatusPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
