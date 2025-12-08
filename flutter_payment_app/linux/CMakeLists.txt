@@ -4,10 +4,10 @@ project(runner LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "flutter_payment_app")
+set(BINARY_NAME "flutter_application_1")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
-set(APPLICATION_ID "com.example.flutter_payment_app")
+set(APPLICATION_ID "com.example.flutter_application_1")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -54,11 +54,27 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 
+# --- Adicionado: Configuração para compilar o Rust ---
+find_program(CARGO_EXECUTABLE cargo REQUIRED)
+set(RUST_PROJECT_DIR "${CMAKE_SOURCE_DIR}/../rust_payment_engine")
+
+add_custom_target(build_rust_lib
+  COMMAND ${CARGO_EXECUTABLE} build --release
+  WORKING_DIRECTORY ${RUST_PROJECT_DIR}
+  COMMENT "Compilando biblioteca Rust (release)..."
+  VERBATIM
+)
+# -----------------------------------------------------
+
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# --- Adicionado: Garante que o Rust compile antes do app ---
+add_dependencies(${BINARY_NAME} build_rust_lib)
+# -----------------------------------------------------------
 
 # Only the install-generated bundle's copy of the executable will launch
 # correctly, since the resources must in the right relative locations. To avoid
@@ -100,6 +116,12 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
+# Copia a biblioteca Rust compilada para a pasta lib do bundle da aplicação
+install(FILES "${CMAKE_SOURCE_DIR}/../rust_payment_engine/target/release/librust_payment_engine.so"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
+# ---------------------------
+
 foreach(bundled_library ${PLUGIN_BUNDLED_LIBRARIES})
   install(FILES "${bundled_library}"
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
@@ -126,3 +148,4 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+

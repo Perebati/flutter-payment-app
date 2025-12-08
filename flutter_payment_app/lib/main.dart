@@ -1,7 +1,14 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
+import 'rust_gateway.dart';
 
+/// Define o estado atual de uma transação no ciclo de vida do pagamento.
+///
+/// **Rust Backend Note:**
+/// Este enum deve ser mapeado para uma máquina de estados no backend.
+/// - `idle`: Estado inicial, nenhuma ação tomada.
+/// - `processing`: Transação enviada, aguardando resposta do gateway.
+/// - `approved`: Sucesso (HTTP 200 / Code 0).
+/// - `declined`: Recusada pelo banco/emissor (HTTP 402 / Code 1).
 enum PaymentStatus {
   idle,
   awaitingCard,
@@ -11,6 +18,14 @@ enum PaymentStatus {
   cancelled,
 }
 
+/// Os métodos de entrada de dados do cartão suportados.
+///
+/// **Rust Backend Note:**
+/// Mapeado para um `u8` ou `i32` na camada de FFI.
+/// - 0: NFC (Contactless)
+/// - 1: Chip (EMV)
+/// - 2: Magnetic Stripe (Legacy)
+/// - 3: Manual Entry (Fallback)
 enum PaymentMethod {
   tap,
   chip,
@@ -18,6 +33,10 @@ enum PaymentMethod {
   manual,
 }
 
+/// Representa uma transação financeira completa e imutável.
+///
+/// Esta classe serve como a "Source of Truth" para o frontend exibir
+/// o recibo ou histórico.
 class PaymentTransaction {
   PaymentTransaction({
     required this.reference,
@@ -32,15 +51,40 @@ class PaymentTransaction {
     this.message,
   });
 
+  /// O código único de referência da transação.
+  ///
+  /// **Rust Backend Note:** Geralmente um UUID v4 gerado pelo backend.
   final String reference;
+
+  /// Valor original da compra.
+  ///
+  /// **Rust Backend Note:** Mapeado como `f64` na FFI atual.
   final double amount;
+
+  /// Valor da gorjeta adicionada.
   final double tip;
+
+  /// Soma de [amount] + [tip].
   final double total;
+
+  /// O método de captura utilizado.
   final PaymentMethod method;
+
+  /// O resultado do processamento.
   final PaymentStatus status;
+
+  /// Carimbo de tempo da transação.
+  ///
+  /// **Rust Backend Note:** Deve ser sempre serializado/tratado em UTC.
   final DateTime timestamp;
+
+  /// Os últimos 4 dígitos do cartão (ex: "**** 1234").
   final String cardMasked;
+
+  /// A bandeira do cartão (Visa, Mastercard, Elo).
   final String issuer;
+
+  /// Mensagem de retorno do adquirente (ex: "Saldo insuficiente").
   final String? message;
 
   String get formattedMethod {
@@ -118,6 +162,7 @@ class _TerminalHomePageState extends State<TerminalHomePage> {
   String _statusMessage = 'Pronto para iniciar uma nova venda.';
   final List<PaymentTransaction> _history = <PaymentTransaction>[];
   bool _locked = false;
+  final RustPaymentGateway _rustGateway = RustPaymentGateway();
 
   double get _baseAmount =>
       double.tryParse(_amountController.text.replaceAll(',', '.')) ?? 0;
@@ -152,7 +197,7 @@ class _TerminalHomePageState extends State<TerminalHomePage> {
       _locked = true;
     });
 
-    Future<void>.delayed(const Duration(seconds: 2), () {
+    Future<void>.delayed(const Duration(seconds: 0), () {
       if (!mounted || _status != PaymentStatus.awaitingCard) {
         return;
       }
@@ -162,14 +207,20 @@ class _TerminalHomePageState extends State<TerminalHomePage> {
       });
     });
 
-    Future<void>.delayed(const Duration(seconds: 5), () {
+    Future<void>.delayed(const Duration(seconds: 0), () {
       if (!mounted || _status != PaymentStatus.processing) {
         return;
       }
 
-      final bool success = Random().nextBool();
+      final RustPaymentOutcome decision = _rustGateway.authorizePayment(
+        amount: _baseAmount,
+        tip: _tipValue,
+        methodIndex: _selectedMethod.index,
+      );
+
       final PaymentStatus finalStatus =
-          success ? PaymentStatus.approved : PaymentStatus.declined;
+          decision.approved ? PaymentStatus.approved : PaymentStatus.declined;
+      final double riskPercent = (decision.riskScore * 100).clamp(0, 100);
 
       final PaymentTransaction transaction = PaymentTransaction(
         reference: 'TRX-${DateTime.now().millisecondsSinceEpoch}',
@@ -179,10 +230,12 @@ class _TerminalHomePageState extends State<TerminalHomePage> {
         method: _selectedMethod,
         status: finalStatus,
         timestamp: DateTime.now(),
-        cardMasked: success ? '5482 •••• •••• 8821' : '4923 •••• •••• 0199',
-        issuer: success ? 'Banco Azul' : 'Banco Terra',
+        cardMasked: decision.approved
+            ? '5482 •••• •••• 8821'
+            : '4923 •••• •••• 0199',
+        issuer: decision.approved ? 'Banco Azul' : 'Banco Terra',
         message:
-            success ? 'Transação autorizada.' : 'Falha de comunicação com o emissor.',
+            '${decision.message}\n${decision.methodDescription} | Score ${riskPercent.toStringAsFixed(1)}%',
       );
 
       setState(() {
@@ -325,7 +378,7 @@ class _TerminalInfoCard extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.12),
+                    color: statusColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -791,7 +844,7 @@ class _HistoryTile extends StatelessWidget {
       child: Row(
         children: [
           CircleAvatar(
-            backgroundColor: statusColor.withOpacity(0.15),
+            backgroundColor: statusColor.withValues(alpha: 0.15),
             child: Icon(_methodIcon(transaction.method), color: statusColor),
           ),
           const SizedBox(width: 12),
@@ -881,7 +934,7 @@ class _StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
@@ -938,7 +991,7 @@ class _StatusPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
