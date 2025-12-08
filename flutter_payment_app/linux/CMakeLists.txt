@@ -4,10 +4,10 @@ project(runner LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "flutter_payment_app")
+set(BINARY_NAME "flutter_application_1")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
-set(APPLICATION_ID "com.example.flutter_payment_app")
+set(APPLICATION_ID "com.example.flutter_application_1")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -100,6 +100,12 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
+# Copia a biblioteca Rust compilada para a pasta lib do bundle da aplicação
+install(FILES "${CMAKE_SOURCE_DIR}/../rust_payment_engine/target/release/librust_payment_engine.so"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
+# ---------------------------
+
 foreach(bundled_library ${PLUGIN_BUNDLED_LIBRARIES})
   install(FILES "${bundled_library}"
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
@@ -121,8 +127,11 @@ install(CODE "
 install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
 
+  
+
 # Install the AOT library on non-Debug builds only.
 if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
