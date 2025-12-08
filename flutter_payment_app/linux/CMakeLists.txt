@@ -54,11 +54,27 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 
+# --- Adicionado: Configuração para compilar o Rust ---
+find_program(CARGO_EXECUTABLE cargo REQUIRED)
+set(RUST_PROJECT_DIR "${CMAKE_SOURCE_DIR}/../rust_payment_engine")
+
+add_custom_target(build_rust_lib
+  COMMAND ${CARGO_EXECUTABLE} build --release
+  WORKING_DIRECTORY ${RUST_PROJECT_DIR}
+  COMMENT "Compilando biblioteca Rust (release)..."
+  VERBATIM
+)
+# -----------------------------------------------------
+
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# --- Adicionado: Garante que o Rust compile antes do app ---
+add_dependencies(${BINARY_NAME} build_rust_lib)
+# -----------------------------------------------------------
 
 # Only the install-generated bundle's copy of the executable will launch
 # correctly, since the resources must in the right relative locations. To avoid
@@ -126,8 +142,6 @@ install(CODE "
   " COMPONENT Runtime)
 install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
-
-  
 
 # Install the AOT library on non-Debug builds only.
 if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
