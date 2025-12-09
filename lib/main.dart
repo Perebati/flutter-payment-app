@@ -1,266 +1,213 @@
+/// Terminal de Pagamentos - Demonstração Flutter + Rust FFI
+///
+/// Este aplicativo demonstra a integração entre Flutter e Rust usando dart:ffi,
+/// implementando um terminal de pagamentos simplificado com recursos de:
+///
+/// - Processamento de transações via motor Rust
+/// - Validação de cartões com algoritmo de Luhn
+/// - Cálculo de taxas em tempo real
+/// - Geração de IDs únicos thread-safe
+/// - Análise estatística de lotes de transações
+///
+/// {@category Demo Application}
+library;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'rust_gateway.dart';
-
-/// Define o estado atual de uma transação no ciclo de vida do pagamento.
-///
-/// **Rust Backend Note:**
-/// Este enum deve ser mapeado para uma máquina de estados no backend.
-/// - `idle`: Estado inicial, nenhuma ação tomada.
-/// - `processing`: Transação enviada, aguardando resposta do gateway.
-/// - `approved`: Sucesso (HTTP 200 / Code 0).
-/// - `declined`: Recusada pelo banco/emissor (HTTP 402 / Code 1).
-enum PaymentStatus {
-  idle,
-  awaitingCard,
-  processing,
-  approved,
-  declined,
-  cancelled,
-}
-
-/// Os métodos de entrada de dados do cartão suportados.
-///
-/// **Rust Backend Note:**
-/// Mapeado para um `u8` ou `i32` na camada de FFI.
-/// - 0: NFC (Contactless)
-/// - 1: Chip (EMV)
-/// - 2: Magnetic Stripe (Legacy)
-/// - 3: Manual Entry (Fallback)
-enum PaymentMethod {
-  tap,
-  chip,
-  swipe,
-  manual,
-}
-
-/// Representa uma transação financeira completa e imutável.
-///
-/// Esta classe serve como a "Source of Truth" para o frontend exibir
-/// o recibo ou histórico.
-class PaymentTransaction {
-  PaymentTransaction({
-    required this.reference,
-    required this.amount,
-    required this.tip,
-    required this.total,
-    required this.method,
-    required this.status,
-    required this.timestamp,
-    required this.cardMasked,
-    required this.issuer,
-    this.message,
-  });
-
-  /// O código único de referência da transação.
-  ///
-  /// **Rust Backend Note:** Geralmente um UUID v4 gerado pelo backend.
-  final String reference;
-
-  /// Valor original da compra.
-  ///
-  /// **Rust Backend Note:** Mapeado como `f64` na FFI atual.
-  final double amount;
-
-  /// Valor da gorjeta adicionada.
-  final double tip;
-
-  /// Soma de [amount] + [tip].
-  final double total;
-
-  /// O método de captura utilizado.
-  final PaymentMethod method;
-
-  /// O resultado do processamento.
-  final PaymentStatus status;
-
-  /// Carimbo de tempo da transação.
-  ///
-  /// **Rust Backend Note:** Deve ser sempre serializado/tratado em UTC.
-  final DateTime timestamp;
-
-  /// Os últimos 4 dígitos do cartão (ex: "**** 1234").
-  final String cardMasked;
-
-  /// A bandeira do cartão (Visa, Mastercard, Elo).
-  final String issuer;
-
-  /// Mensagem de retorno do adquirente (ex: "Saldo insuficiente").
-  final String? message;
-
-  String get formattedMethod {
-    switch (method) {
-      case PaymentMethod.tap:
-        return 'Aproximação';
-      case PaymentMethod.chip:
-        return 'Chip EMV';
-      case PaymentMethod.swipe:
-        return 'Tarja magnética';
-      case PaymentMethod.manual:
-        return 'Digitação manual';
-    }
-  }
-
-  String get formattedStatus {
-    switch (status) {
-      case PaymentStatus.approved:
-        return 'APROVADA';
-      case PaymentStatus.declined:
-        return 'NEGADA';
-      case PaymentStatus.cancelled:
-        return 'CANCELADA';
-      case PaymentStatus.awaitingCard:
-        return 'AGUARDANDO CARTÃO';
-      case PaymentStatus.processing:
-        return 'PROCESSANDO';
-      case PaymentStatus.idle:
-        return 'PRONTA';
-    }
-  }
-}
 
 void main() {
   runApp(const PaymentApp());
 }
 
+/// Aplicação principal do terminal de pagamentos.
+///
+/// Configura o tema Material 3 e inicializa a home page.
 class PaymentApp extends StatelessWidget {
   const PaymentApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Terminal POS',
+      title: 'Terminal POS - Rust FFI Demo',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF5F6FA),
-        appBarTheme: const AppBarTheme(
-          centerTitle: false,
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black87,
-          elevation: 0,
-        ),
       ),
-      home: const TerminalHomePage(),
+      home: const PaymentTerminalPage(),
     );
   }
 }
 
-class TerminalHomePage extends StatefulWidget {
-  const TerminalHomePage({super.key});
+/// Página principal do terminal de pagamentos.
+///
+/// Interface simplificada focada nas funcionalidades essenciais:
+/// - Campo de valor da transação
+/// - Campo de número do cartão (com validação em tempo real)
+/// - Botão de processamento
+/// - Exibição de resultados e histórico
+class PaymentTerminalPage extends StatefulWidget {
+  const PaymentTerminalPage({super.key});
 
   @override
-  State<TerminalHomePage> createState() => _TerminalHomePageState();
+  State<PaymentTerminalPage> createState() => _PaymentTerminalPageState();
 }
 
-class _TerminalHomePageState extends State<TerminalHomePage> {
-  final TextEditingController _amountController =
-      TextEditingController(text: '125.50');
-  PaymentMethod _selectedMethod = PaymentMethod.tap;
-  PaymentStatus _status = PaymentStatus.idle;
-  double _tipPercent = 10;
-  String _statusMessage = 'Pronto para iniciar uma nova venda.';
-  final List<PaymentTransaction> _history = <PaymentTransaction>[];
-  bool _locked = false;
-  final RustPaymentGateway _rustGateway = RustPaymentGateway();
+class _PaymentTerminalPageState extends State<PaymentTerminalPage> {
+  final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _cardController = TextEditingController();
+  final RustPaymentGateway _gateway = RustPaymentGateway();
 
-  double get _baseAmount =>
-      double.tryParse(_amountController.text.replaceAll(',', '.')) ?? 0;
+  // Estado da aplicação
+  bool _processing = false;
+  CardValidationResult? _cardValidation;
+  FeeBreakdownResult? _currentFees;
+  RustPaymentOutcome? _lastResult;
+  final List<TransactionRecord> _history = [];
 
-  double get _tipValue => (_baseAmount * _tipPercent) / 100;
+  @override
+  void initState() {
+    super.initState();
 
-  double get _totalAmount => _baseAmount + _tipValue;
+    // Listener para recalcular taxas quando o valor mudar
+    _amountController.addListener(_updateFees);
 
-  bool get _hasAmount => _baseAmount > 0;
-
-  bool get _inProgress =>
-      _status == PaymentStatus.processing || _status == PaymentStatus.awaitingCard;
+    // Listener para validar cartão em tempo real
+    _cardController.addListener(_validateCardRealtime);
+  }
 
   @override
   void dispose() {
     _amountController.dispose();
+    _cardController.dispose();
     super.dispose();
   }
 
-  void _startPayment() {
-    if (!_hasAmount) {
-      _showSnack('Informe um valor maior que zero.');
+  /// Atualiza o cálculo de taxas em tempo real via Rust.
+  void _updateFees() {
+    final double amount = double.tryParse(_amountController.text) ?? 0;
+    if (amount > 0 && _gateway.isInitialized) {
+      setState(() {
+        // Método padrão: Chip (1)
+        _currentFees = _gateway.calculateTransactionFees(
+          amount: amount,
+          methodIndex: 1,
+        );
+      });
+    } else {
+      setState(() {
+        _currentFees = null;
+      });
+    }
+  }
+
+  /// Valida número do cartão em tempo real usando algoritmo de Luhn (Rust).
+  void _validateCardRealtime() {
+    final String cardNumber = _cardController.text.replaceAll(' ', '');
+    if (cardNumber.length >= 13 && _gateway.isInitialized) {
+      setState(() {
+        _cardValidation = _gateway.validateCard(cardNumber);
+      });
+    } else {
+      setState(() {
+        _cardValidation = null;
+      });
+    }
+  }
+
+  /// Processa o pagamento através do motor Rust.
+  Future<void> _processPayment() async {
+    final double amount = double.tryParse(_amountController.text) ?? 0;
+    final String cardNumber = _cardController.text.replaceAll(' ', '');
+
+    // Validações básicas
+    if (amount <= 0) {
+      _showSnackbar('Informe um valor válido', isError: true);
       return;
     }
-    if (_inProgress) {
+
+    if (cardNumber.length < 13) {
+      _showSnackbar('Informe um número de cartão válido', isError: true);
+      return;
+    }
+
+    // Valida cartão via Rust
+    final CardValidationResult validation = _gateway.validateCard(cardNumber);
+    if (!validation.isValid) {
+      _showSnackbar('Cartão inválido: ${validation.message}', isError: true);
       return;
     }
 
     setState(() {
-      _status = PaymentStatus.awaitingCard;
-      _statusMessage = 'Aproxime, insira ou passe o cartão para continuar.';
-      _locked = true;
+      _processing = true;
     });
 
-    Future<void>.delayed(const Duration(seconds: 0), () {
-      if (!mounted || _status != PaymentStatus.awaitingCard) {
-        return;
-      }
-      setState(() {
-        _status = PaymentStatus.processing;
-        _statusMessage = 'Lendo chip / aproximação...';
-      });
-    });
+    // Simula latência de rede (opcional)
+    await Future<void>.delayed(const Duration(milliseconds: 800));
 
-    Future<void>.delayed(const Duration(seconds: 0), () {
-      if (!mounted || _status != PaymentStatus.processing) {
-        return;
-      }
+    // Processa pagamento via Rust
+    final RustPaymentOutcome outcome = _gateway.authorizePayment(
+      amount: amount,
+      tip: 0.0,
+      methodIndex: 1, // Chip EMV
+    );
 
-      final RustPaymentOutcome decision = _rustGateway.authorizePayment(
-        amount: _baseAmount,
-        tip: _tipValue,
-        methodIndex: _selectedMethod.index,
-      );
+    // Gera ID único via Rust
+    final String txnId = _gateway.generateUniqueTransactionId();
 
-      final PaymentStatus finalStatus =
-          decision.approved ? PaymentStatus.approved : PaymentStatus.declined;
-      final double riskPercent = (decision.riskScore * 100).clamp(0, 100);
+    // Calcula taxas via Rust
+    final FeeBreakdownResult fees = _gateway.calculateTransactionFees(
+      amount: amount,
+      methodIndex: 1,
+    );
 
-      final PaymentTransaction transaction = PaymentTransaction(
-        reference: 'TRX-${DateTime.now().millisecondsSinceEpoch}',
-        amount: _baseAmount,
-        tip: _tipValue,
-        total: _totalAmount,
-        method: _selectedMethod,
-        status: finalStatus,
-        timestamp: DateTime.now(),
-        cardMasked: decision.approved
-            ? '5482 •••• •••• 8821'
-            : '4923 •••• •••• 0199',
-        issuer: decision.approved ? 'Banco Azul' : 'Banco Terra',
-        message:
-            '${decision.message}\n${decision.methodDescription} | Score ${riskPercent.toStringAsFixed(1)}%',
-      );
+    // Registra no histórico
+    final TransactionRecord record = TransactionRecord(
+      id: txnId,
+      amount: amount,
+      cardType: validation.cardType,
+      cardMasked: _maskCard(cardNumber),
+      approved: outcome.approved,
+      riskScore: outcome.riskScore,
+      message: outcome.message,
+      timestamp: DateTime.now(),
+      fees: fees,
+    );
 
-      setState(() {
-        _history.insert(0, transaction);
-        _status = finalStatus;
-        _statusMessage = transaction.message ?? '';
-        _locked = false;
-      });
-    });
-  }
-
-  void _cancelPayment() {
-    if (!_inProgress) {
-      return;
-    }
     setState(() {
-      _status = PaymentStatus.cancelled;
-      _statusMessage = 'Operação cancelada antes da autorização.';
-      _locked = false;
+      _processing = false;
+      _lastResult = outcome;
+      _history.insert(0, record);
     });
+
+    _showSnackbar(
+      outcome.approved ? 'Transação aprovada!' : 'Transação negada',
+      isError: !outcome.approved,
+    );
   }
 
-  void _showSnack(String text) {
+  /// Mascara o número do cartão (exibe apenas últimos 4 dígitos).
+  String _maskCard(String cardNumber) {
+    if (cardNumber.length < 4) return cardNumber;
+    final String last4 = cardNumber.substring(cardNumber.length - 4);
+    return '•••• •••• •••• $last4';
+  }
+
+  /// Calcula estatísticas do histórico via Rust.
+  String? _calculateHistoryStats() {
+    if (_history.isEmpty || !_gateway.isInitialized) return null;
+
+    final List<double> amounts = _history.map((TransactionRecord r) => r.amount).toList();
+    return _gateway.calculateBatchStatistics(amounts);
+  }
+
+  void _showSnackbar(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text)),
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red.shade700 : Colors.green.shade700,
+      ),
     );
   }
 
@@ -269,314 +216,165 @@ class _TerminalHomePageState extends State<TerminalHomePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Terminal de Pagamentos'),
-        actions: const [
-          _ConnectionIndicator(),
+        centerTitle: true,
+        actions: [
+          // Indicador de status do motor Rust
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Row(
+              children: [
+                Icon(
+                  _gateway.isInitialized ? Icons.check_circle : Icons.error,
+                  color: _gateway.isInitialized ? Colors.green : Colors.red,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _gateway.isInitialized ? 'Rust OK' : 'Rust Error',
+                  style: TextStyle(
+                    color: _gateway.isInitialized ? Colors.green : Colors.red,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
       body: SafeArea(
         child: LayoutBuilder(
           builder: (BuildContext context, BoxConstraints constraints) {
-            final bool isWide = constraints.maxWidth > 900;
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1200),
-                  child: isWide
-                      ? Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(child: _buildLeftColumn()),
-                            const SizedBox(width: 16),
-                            Expanded(child: _buildRightColumn()),
-                          ],
-                        )
-                      : Column(
-                          children: [
-                            _buildLeftColumn(),
-                            const SizedBox(height: 16),
-                            _buildRightColumn(),
-                          ],
-                        ),
+            // Layout responsivo: coluna única em telas pequenas, duas colunas em telas grandes
+            final bool isWideScreen = constraints.maxWidth > 900;
+
+            if (isWideScreen) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _buildTransactionPanel()),
+                  const SizedBox(width: 16),
+                  Expanded(child: _buildHistoryPanel()),
+                ],
+              );
+            } else {
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    _buildTransactionPanel(),
+                    const SizedBox(height: 16),
+                    _buildHistoryPanel(),
+                  ],
                 ),
-              ),
-            );
+              );
+            }
           },
         ),
       ),
     );
   }
 
-  Widget _buildLeftColumn() {
-    return Column(
-      children: [
-        _TerminalInfoCard(status: _status, message: _statusMessage),
-        const SizedBox(height: 16),
-        _PaymentFormCard(
-          amountController: _amountController,
-          selectedMethod: _selectedMethod,
-          tipPercent: _tipPercent,
-          tipValue: _tipValue,
-          total: _totalAmount,
-          onMethodChanged: (PaymentMethod method) {
-            setState(() => _selectedMethod = method);
-          },
-          onTipChanged: (double percent) {
-            setState(() => _tipPercent = percent);
-          },
-          onSubmit: _startPayment,
-          inProgress: _inProgress,
-          locked: _locked,
-        ),
-      ],
+  /// Painel de transação (esquerda/topo): entrada de dados e processamento.
+  Widget _buildTransactionPanel() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildTransactionForm(),
+          const SizedBox(height: 16),
+          if (_currentFees != null) _buildFeesDisplay(),
+          const SizedBox(height: 16),
+          if (_lastResult != null) _buildResultCard(),
+        ],
+      ),
     );
   }
 
-  Widget _buildRightColumn() {
-    return Column(
-      children: [
-        _ReceiptPreview(
-          amount: _baseAmount,
-          tip: _tipValue,
-          total: _totalAmount,
-          method: _selectedMethod,
-          status: _status,
-          statusMessage: _statusMessage,
-          onCancel: _cancelPayment,
-          inProgress: _inProgress,
-        ),
-        const SizedBox(height: 16),
-        _HistoryCard(history: _history),
-      ],
-    );
-  }
-}
-
-class _TerminalInfoCard extends StatelessWidget {
-  const _TerminalInfoCard({
-    required this.status,
-    required this.message,
-  });
-
-  final PaymentStatus status;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final Color statusColor = _statusColor(status, context);
+  /// Formulário de entrada de transação.
+  Widget _buildTransactionForm() {
     return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(24),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: statusColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.payments_outlined,
-                          color: statusColor, size: 20),
-                      const SizedBox(width: 8),
-                      Text(
-                        'TERMINAL AURORA - 02',
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(color: statusColor, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                ),
-                const Spacer(),
-                _StatusBadge(status: status),
-              ],
-            ),
-            const SizedBox(height: 12),
             Text(
-              message,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: Colors.black87),
+              'Nova Transação',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
             ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                const _InfoChip(
-                  icon: Icons.store_mall_directory_outlined,
-                  label: 'Loja Aurora - Matriz',
-                ),
-                const _InfoChip(
-                  icon: Icons.numbers,
-                  label: 'Serial 9832-4412',
-                ),
-                const _InfoChip(
-                  icon: Icons.wifi_tethering,
-                  label: 'Rede segura - WPA2',
-                ),
-                const _InfoChip(
-                  icon: Icons.cloud_done,
-                  label: 'Sincronizado com gateway',
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+            const SizedBox(height: 24),
 
-  Color _statusColor(PaymentStatus status, BuildContext context) {
-    switch (status) {
-      case PaymentStatus.approved:
-        return Colors.green.shade700;
-      case PaymentStatus.declined:
-        return Colors.red.shade700;
-      case PaymentStatus.cancelled:
-        return Colors.orange.shade700;
-      case PaymentStatus.processing:
-        return Colors.blue.shade700;
-      case PaymentStatus.awaitingCard:
-        return Colors.indigo.shade700;
-      case PaymentStatus.idle:
-        return Theme.of(context).colorScheme.primary;
-    }
-  }
-}
-
-class _PaymentFormCard extends StatelessWidget {
-  const _PaymentFormCard({
-    required this.amountController,
-    required this.selectedMethod,
-    required this.tipPercent,
-    required this.tipValue,
-    required this.total,
-    required this.onMethodChanged,
-    required this.onTipChanged,
-    required this.onSubmit,
-    required this.inProgress,
-    required this.locked,
-  });
-
-  final TextEditingController amountController;
-  final PaymentMethod selectedMethod;
-  final double tipPercent;
-  final double tipValue;
-  final double total;
-  final ValueChanged<PaymentMethod> onMethodChanged;
-  final ValueChanged<double> onTipChanged;
-  final VoidCallback onSubmit;
-  final bool inProgress;
-  final bool locked;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.point_of_sale, color: Theme.of(context).primaryColor),
-                const SizedBox(width: 8),
-                Text(
-                  'Detalhes da venda',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
+            // Campo de valor
             TextField(
-              controller: amountController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              enabled: !locked,
+              controller: _amountController,
               decoration: const InputDecoration(
-                labelText: 'Valor da cobrança',
+                labelText: 'Valor da Transação',
                 prefixText: 'R\$ ',
                 border: OutlineInputBorder(),
+                helperText: 'Digite o valor em reais (ex: 100.50)',
               ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Forma de captura do cartão',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 10,
-              runSpacing: 8,
-              children: PaymentMethod.values.map((PaymentMethod method) {
-                return ChoiceChip(
-                  label: Text(_methodLabel(method)),
-                  selected: selectedMethod == method,
-                  onSelected: locked
-                      ? null
-                      : (_) {
-                          onMethodChanged(method);
-                        },
-                  avatar: Icon(_methodIcon(method), size: 18),
-                );
-              }).toList(),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+              ],
+              enabled: !_processing,
             ),
             const SizedBox(height: 16),
-            Text(
-              'Gorjeta: ${tipPercent.toStringAsFixed(0)}%',
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            Slider(
-              value: tipPercent,
-              max: 20,
-              divisions: 20,
-              label: '${tipPercent.toStringAsFixed(0)}%',
-              onChanged: locked ? null : onTipChanged,
-            ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text('Gorjeta: R\$ ${tipValue.toStringAsFixed(2)}'),
-                  Text(
-                    'Total a cobrar: R\$ ${total.toStringAsFixed(2)}',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ],
+
+            // Campo de número do cartão
+            TextField(
+              controller: _cardController,
+              decoration: InputDecoration(
+                labelText: 'Número do Cartão',
+                border: const OutlineInputBorder(),
+                helperText: 'Validação em tempo real via Rust FFI',
+                suffixIcon: _cardValidation != null
+                    ? Icon(
+                        _cardValidation!.isValid ? Icons.check_circle : Icons.error,
+                        color: _cardValidation!.isValid ? Colors.green : Colors.red,
+                      )
+                    : null,
               ),
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(19),
+              ],
+              enabled: !_processing,
             ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: inProgress ? null : onSubmit,
-                icon: const Icon(Icons.lock_open),
-                label: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text(inProgress ? 'Processando...' : 'Simular cobrança'),
+
+            // Informação de validação do cartão
+            if (_cardValidation != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _cardValidation!.isValid
+                    ? '✓ Cartão ${_cardValidation!.cardType} válido'
+                    : '✗ ${_cardValidation!.message}',
+                style: TextStyle(
+                  color: _cardValidation!.isValid ? Colors.green.shade700 : Colors.red.shade700,
+                  fontWeight: FontWeight.bold,
                 ),
+              ),
+            ],
+
+            const SizedBox(height: 24),
+
+            // Botão de processar pagamento
+            FilledButton.icon(
+              onPressed: _processing ? null : _processPayment,
+              icon: _processing
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.payment),
+              label: Text(_processing ? 'Processando...' : 'Confirmar Pagamento'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.all(16),
               ),
             ),
           ],
@@ -585,123 +383,49 @@ class _PaymentFormCard extends StatelessWidget {
     );
   }
 
-  String _methodLabel(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.tap:
-        return 'NFC / Aproximação';
-      case PaymentMethod.chip:
-        return 'Chip';
-      case PaymentMethod.swipe:
-        return 'Tarja';
-      case PaymentMethod.manual:
-        return 'Digitação';
-    }
-  }
+  /// Exibição de taxas calculadas pelo Rust.
+  Widget _buildFeesDisplay() {
+    if (_currentFees == null) return const SizedBox.shrink();
 
-  IconData _methodIcon(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.tap:
-        return Icons.nfc;
-      case PaymentMethod.chip:
-        return Icons.credit_card;
-      case PaymentMethod.swipe:
-        return Icons.swipe;
-      case PaymentMethod.manual:
-        return Icons.keyboard_alt_outlined;
-    }
-  }
-}
-
-class _ReceiptPreview extends StatelessWidget {
-  const _ReceiptPreview({
-    required this.amount,
-    required this.tip,
-    required this.total,
-    required this.method,
-    required this.status,
-    required this.statusMessage,
-    required this.onCancel,
-    required this.inProgress,
-  });
-
-  final double amount;
-  final double tip;
-  final double total;
-  final PaymentMethod method;
-  final PaymentStatus status;
-  final String statusMessage;
-  final VoidCallback onCancel;
-  final bool inProgress;
-
-  @override
-  Widget build(BuildContext context) {
     return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      color: Colors.blue.shade50,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                Icon(Icons.receipt_long, color: Theme.of(context).primaryColor),
+                Icon(Icons.info_outline, color: Colors.blue.shade700),
                 const SizedBox(width: 8),
                 Text(
-                  'Resumo do comprovante',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.bold),
+                  'Cálculo de Taxas (Rust)',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue.shade700,
+                  ),
                 ),
-                const Spacer(),
-                _StatusBadge(status: status),
               ],
             ),
-            const SizedBox(height: 12),
-            _ReceiptRow(label: 'Valor do produto', value: amount),
-            _ReceiptRow(label: 'Gorjeta', value: tip),
-            Divider(color: Colors.grey.shade300),
-            _ReceiptRow(
-              label: 'Total a cobrar',
-              value: total,
-              isEmphasis: true,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(_methodIcon(method), color: Colors.grey.shade700),
-                const SizedBox(width: 8),
-                Text(_methodLabel(method)),
-              ],
+            const Divider(),
+            _buildFeeRow('Valor bruto:', _currentFees!.grossAmount),
+            _buildFeeRow('Taxa fixa:', _currentFees!.fixedFee, isDeduction: true),
+            _buildFeeRow('Taxa %:', _currentFees!.percentageFee, isDeduction: true),
+            const Divider(),
+            _buildFeeRow(
+              'Você recebe:',
+              _currentFees!.netAmount,
+              isBold: true,
+              color: Colors.green.shade700,
             ),
             const SizedBox(height: 8),
             Text(
-              statusMessage,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: Colors.grey.shade800),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: inProgress ? onCancel : null,
-                    icon: const Icon(Icons.cancel),
-                    label: const Text('Cancelar'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.share),
-                    label: const Text('Compartilhar recibo'),
-                  ),
-                ),
-              ],
+              'Taxa efetiva: ${_currentFees!.effectiveRate.toStringAsFixed(2)}%',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade700,
+                fontStyle: FontStyle.italic,
+              ),
             ),
           ],
         ),
@@ -709,116 +433,252 @@ class _ReceiptPreview extends StatelessWidget {
     );
   }
 
-  String _methodLabel(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.tap:
-        return 'Aproximação NFC';
-      case PaymentMethod.chip:
-        return 'Chip EMV';
-      case PaymentMethod.swipe:
-        return 'Tarja magnética';
-      case PaymentMethod.manual:
-        return 'Digitação manual';
-    }
-  }
-
-  IconData _methodIcon(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.tap:
-        return Icons.nfc;
-      case PaymentMethod.chip:
-        return Icons.credit_card;
-      case PaymentMethod.swipe:
-        return Icons.swipe;
-      case PaymentMethod.manual:
-        return Icons.keyboard_alt_outlined;
-    }
-  }
-}
-
-class _ReceiptRow extends StatelessWidget {
-  const _ReceiptRow({
-    required this.label,
-    required this.value,
-    this.isEmphasis = false,
-  });
-
-  final String label;
-  final double value;
-  final bool isEmphasis;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextStyle? baseStyle = Theme.of(context).textTheme.bodyLarge;
+  Widget _buildFeeRow(String label, double value, {bool isBold = false, bool isDeduction = false, Color? color}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(
-            child: Text(
-              label,
-              style: baseStyle,
+          Text(
+            label,
+            style: TextStyle(
+              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+              color: color,
             ),
           ),
           Text(
-            'R\$ ${value.toStringAsFixed(2)}',
-            style: isEmphasis
-                ? baseStyle?.copyWith(fontWeight: FontWeight.bold)
-                : baseStyle,
+            '${isDeduction ? "-" : ""}R\$ ${value.toStringAsFixed(2)}',
+            style: TextStyle(
+              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+              color: color ?? (isDeduction ? Colors.red.shade700 : null),
+            ),
           ),
         ],
       ),
     );
   }
-}
 
-class _HistoryCard extends StatelessWidget {
-  const _HistoryCard({required this.history});
+  /// Card de resultado da última transação.
+  Widget _buildResultCard() {
+    if (_lastResult == null) return const SizedBox.shrink();
 
-  final List<PaymentTransaction> history;
+    final bool approved = _lastResult!.approved;
+    final Color statusColor = approved ? Colors.green.shade700 : Colors.red.shade700;
 
-  @override
-  Widget build(BuildContext context) {
     return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      color: approved ? Colors.green.shade50 : Colors.red.shade50,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              approved ? Icons.check_circle : Icons.cancel,
+              color: statusColor,
+              size: 48,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              approved ? 'TRANSAÇÃO APROVADA' : 'TRANSAÇÃO NEGADA',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: statusColor,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _lastResult!.message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Score de Risco: ${(_lastResult!.riskScore * 100).toStringAsFixed(1)}%',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Painel de histórico (direita/baixo): lista de transações e estatísticas.
+  Widget _buildHistoryPanel() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Estatísticas agregadas (calculadas via Rust)
+          if (_history.isNotEmpty) ...[
+            _buildStatsCard(),
+            const SizedBox(height: 16),
+          ],
+
+          // Lista de transações
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.history),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Histórico de Transações',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const Spacer(),
+                      if (_history.isNotEmpty)
+                        Text(
+                          '${_history.length} transações',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                    ],
+                  ),
+                  const Divider(),
+                  if (_history.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Center(
+                        child: Text(
+                          'Nenhuma transação ainda',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ),
+                    )
+                  else
+                    ...(_history.map(_buildHistoryItem)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Card de estatísticas agregadas (calculadas via Rust).
+  Widget _buildStatsCard() {
+    final String? stats = _calculateHistoryStats();
+    if (stats == null) return const SizedBox.shrink();
+
+    // Parse simplificado do JSON
+    // Em produção, use dart:convert
+    final RegExp totalRegex = RegExp(r'"total":([\d.]+)');
+    final RegExp avgRegex = RegExp(r'"average":([\d.]+)');
+    final RegExp maxRegex = RegExp(r'"max":([\d.]+)');
+    final RegExp minRegex = RegExp(r'"min":([\d.]+)');
+
+    final double total = double.tryParse(totalRegex.firstMatch(stats)?.group(1) ?? '0') ?? 0;
+    final double avg = double.tryParse(avgRegex.firstMatch(stats)?.group(1) ?? '0') ?? 0;
+    final double max = double.tryParse(maxRegex.firstMatch(stats)?.group(1) ?? '0') ?? 0;
+    final double min = double.tryParse(minRegex.firstMatch(stats)?.group(1) ?? '0') ?? 0;
+
+    return Card(
+      color: Colors.purple.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                Icon(Icons.history, color: Theme.of(context).primaryColor),
+                Icon(Icons.analytics, color: Colors.purple.shade700),
                 const SizedBox(width: 8),
                 Text(
-                  'Últimas operações',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.bold),
+                  'Estatísticas (Calculadas via Rust)',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.purple.shade700,
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            if (history.isEmpty)
-              Text(
-                'Nenhuma transação simulada ainda.',
-                style: Theme.of(context).textTheme.bodyMedium,
-              )
-            else
-              ListView.builder(
-                itemCount: history.length,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemBuilder: (BuildContext context, int index) {
-                  final PaymentTransaction transaction = history[index];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: _HistoryTile(transaction: transaction),
-                  );
-                },
+            const Divider(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildStatItem('Total', total),
+                _buildStatItem('Média', avg),
+                _buildStatItem('Máx', max),
+                _buildStatItem('Mín', min),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatItem(String label, double value) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey.shade600,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'R\$ ${value.toStringAsFixed(2)}',
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Item individual do histórico.
+  Widget _buildHistoryItem(TransactionRecord record) {
+    final Color statusColor = record.approved ? Colors.green.shade700 : Colors.red.shade700;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: statusColor.withValues(alpha: 0.2),
+          child: Icon(
+            record.approved ? Icons.check : Icons.close,
+            color: statusColor,
+          ),
+        ),
+        title: Text(
+          'R\$ ${record.amount.toStringAsFixed(2)} - ${record.cardType}',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(record.cardMasked),
+            Text(
+              '${record.timestamp.hour.toString().padLeft(2, '0')}:${record.timestamp.minute.toString().padLeft(2, '0')} • ${record.id}',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              record.approved ? 'APROVADA' : 'NEGADA',
+              style: TextStyle(
+                color: statusColor,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
               ),
+            ),
+            Text(
+              'Score: ${(record.riskScore * 100).toStringAsFixed(0)}%',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            ),
           ],
         ),
       ),
@@ -826,238 +686,47 @@ class _HistoryCard extends StatelessWidget {
   }
 }
 
-class _HistoryTile extends StatelessWidget {
-  const _HistoryTile({required this.transaction});
+/// Registro de uma transação processada.
+///
+/// Armazena todos os dados relevantes de uma transação para exibição
+/// no histórico e cálculo de estatísticas.
+class TransactionRecord {
+  const TransactionRecord({
+    required this.id,
+    required this.amount,
+    required this.cardType,
+    required this.cardMasked,
+    required this.approved,
+    required this.riskScore,
+    required this.message,
+    required this.timestamp,
+    required this.fees,
+  });
 
-  final PaymentTransaction transaction;
+  /// ID único gerado pelo Rust.
+  final String id;
 
-  @override
-  Widget build(BuildContext context) {
-    final Color statusColor = _statusColor(transaction.status, context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor: statusColor.withValues(alpha: 0.15),
-            child: Icon(_methodIcon(transaction.method), color: statusColor),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  transaction.formattedMethod,
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  transaction.cardMasked,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                Text(
-                  '${transaction.timestamp.hour.toString().padLeft(2, '0')}:${transaction.timestamp.minute.toString().padLeft(2, '0')} - ${transaction.issuer}',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(color: Colors.grey.shade700),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-               'R\$ ${transaction.total.toStringAsFixed(2)}',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              _StatusPill(status: transaction.status, color: statusColor),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+  /// Valor da transação.
+  final double amount;
 
-  IconData _methodIcon(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.tap:
-        return Icons.nfc;
-      case PaymentMethod.chip:
-        return Icons.credit_card;
-      case PaymentMethod.swipe:
-        return Icons.swipe;
-      case PaymentMethod.manual:
-        return Icons.keyboard_alt_outlined;
-    }
-  }
+  /// Tipo de cartão (Visa, Mastercard, etc.).
+  final String cardType;
 
-  Color _statusColor(PaymentStatus status, BuildContext context) {
-    switch (status) {
-      case PaymentStatus.approved:
-        return Colors.green.shade700;
-      case PaymentStatus.declined:
-        return Colors.red.shade700;
-      case PaymentStatus.cancelled:
-        return Colors.orange.shade700;
-      case PaymentStatus.processing:
-        return Colors.blue.shade700;
-      case PaymentStatus.awaitingCard:
-        return Colors.indigo.shade700;
-      case PaymentStatus.idle:
-        return Theme.of(context).colorScheme.primary;
-    }
-  }
-}
+  /// Número mascarado do cartão.
+  final String cardMasked;
 
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status});
+  /// Status de aprovação.
+  final bool approved;
 
-  final PaymentStatus status;
+  /// Score de risco (0.0 a 1.0).
+  final double riskScore;
 
-  @override
-  Widget build(BuildContext context) {
-    final Color color = _badgeColor(status, context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        _statusLabel(status),
-        style:
-            Theme.of(context).textTheme.labelLarge?.copyWith(color: color),
-      ),
-    );
-  }
+  /// Mensagem do processador.
+  final String message;
 
-  String _statusLabel(PaymentStatus status) {
-    switch (status) {
-      case PaymentStatus.idle:
-        return 'PRONTO';
-      case PaymentStatus.awaitingCard:
-        return 'AGUARDANDO CARTÃO';
-      case PaymentStatus.processing:
-        return 'PROCESSANDO';
-      case PaymentStatus.approved:
-        return 'APROVADA';
-      case PaymentStatus.declined:
-        return 'NEGADA';
-      case PaymentStatus.cancelled:
-        return 'CANCELADA';
-    }
-  }
+  /// Data/hora da transação.
+  final DateTime timestamp;
 
-  Color _badgeColor(PaymentStatus status, BuildContext context) {
-    switch (status) {
-      case PaymentStatus.approved:
-        return Colors.green.shade700;
-      case PaymentStatus.declined:
-        return Colors.red.shade700;
-      case PaymentStatus.cancelled:
-        return Colors.orange.shade700;
-      case PaymentStatus.processing:
-        return Colors.blue.shade700;
-      case PaymentStatus.awaitingCard:
-        return Colors.indigo.shade700;
-      case PaymentStatus.idle:
-        return Theme.of(context).colorScheme.primary;
-    }
-  }
-}
-
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.status, required this.color});
-
-  final PaymentStatus status;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        _label(status),
-        style: Theme.of(context)
-            .textTheme
-            .labelMedium
-            ?.copyWith(color: color, fontWeight: FontWeight.bold),
-      ),
-    );
-  }
-
-  String _label(PaymentStatus status) {
-    switch (status) {
-      case PaymentStatus.approved:
-        return 'Aprovada';
-      case PaymentStatus.declined:
-        return 'Negada';
-      case PaymentStatus.cancelled:
-        return 'Cancelada';
-      case PaymentStatus.processing:
-        return 'Processando';
-      case PaymentStatus.awaitingCard:
-        return 'Aguardando';
-      case PaymentStatus.idle:
-        return 'Pronta';
-    }
-  }
-}
-
-class _InfoChip extends StatelessWidget {
-  const _InfoChip({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Chip(
-      avatar: Icon(icon, size: 18, color: Colors.grey.shade700),
-      label: Text(label),
-      backgroundColor: Colors.grey.shade100,
-    );
-  }
-}
-
-class _ConnectionIndicator extends StatelessWidget {
-  const _ConnectionIndicator();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Row(
-        children: [
-          Icon(Icons.cloud_done, color: Colors.green.shade600),
-          const SizedBox(width: 6),
-          Text(
-            'Gateway conectado',
-            style: Theme.of(context)
-                .textTheme
-                .bodyMedium
-                ?.copyWith(color: Colors.green.shade700),
-          ),
-        ],
-      ),
-    );
-  }
+  /// Detalhamento de taxas.
+  final FeeBreakdownResult fees;
 }
