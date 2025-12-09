@@ -1,40 +1,11 @@
-/// Gateway FFI para o motor de pagamentos implementado em Rust.
+/// Dart bindings para o motor de pagamentos escrito em Rust.
 ///
-/// Este arquivo demonstra a integração entre Dart e Rust usando `dart:ffi`,
-/// permitindo que aplicações Flutter chamem código nativo de alto desempenho.
+/// O gateway carrega a biblioteca compartilhada produzida em `rust_payment_engine`,
+/// publica as funções nativas via `dart:ffi` e disponibiliza wrappers idiomáticos
+/// para uso em Flutter.
 ///
-/// ## Arquitetura FFI
-///
-/// O FFI (Foreign Function Interface) permite que Dart invoque funções de
-/// bibliotecas nativas compiladas (`.so`, `.dll`, `.dylib`). O fluxo é:
-///
-/// ```
-/// Flutter/Dart  →  dart:ffi  →  Rust Library  →  Sistema Operacional
-/// ```
-///
-/// ## Gerenciamento de Memória
-///
-/// **CRÍTICO**: Rust aloca memória para strings que são transferidas para Dart.
-/// É responsabilidade do código Dart liberar essa memória chamando as funções
-/// `free_*` apropriadas. Falha em fazer isso resulta em memory leaks.
-///
-/// ## Exemplo de Uso
-///
-/// ```dart
-/// final gateway = RustPaymentGateway();
-///
-/// // Processar um pagamento
-/// final result = gateway.authorizePayment(
-///   amount: 100.50,
-///   tip: 10.0,
-///   methodIndex: 1, // Chip EMV
-/// );
-/// print('Aprovado: ${result.approved}');
-///
-/// // Validar número de cartão
-/// final validation = gateway.validateCard('4532015112830366');
-/// print('Válido: ${validation.isValid}, Tipo: ${validation.cardType}');
-/// ```
+/// Sempre libere as strings vindas de Rust com as funções auxiliares definidas
+/// neste arquivo para evitar vazamentos de memória.
 ///
 /// {@category FFI}
 /// {@category Payment Processing}
@@ -48,127 +19,66 @@ import 'package:ffi/ffi.dart' as pkg_ffi;
 // FFI Struct Definitions (devem corresponder aos structs Rust)
 // ============================================================================
 
-/// Representa o resultado de uma transação processada pelo backend Rust.
+/// Layout nativo retornado por `process_payment` no lado Rust.
 ///
-/// Este struct é compatível com FFI e mapeia diretamente para o struct
-/// `PaymentResult` definido em `rust_payment_engine/src/lib.rs`.
-///
-/// ## Rust Backend Correspondence
-///
-/// ```rust
-/// #[repr(C)]
-/// pub struct PaymentResult {
-///     pub status: i32,
-///     pub risk_score: f64,
-///     pub message: *mut c_char,
-/// }
-/// ```
-///
-/// ## Memory Safety
-///
-/// O campo `message` é um ponteiro para memória alocada em Rust.
-/// Após consumir o valor, **sempre** chame `free_rust_string(message)`
-/// para evitar memory leaks.
+/// Espelha o struct `PaymentResult` da crate `rust_payment_engine`. O campo
+/// [message] aponta para memória alocada em Rust e precisa ser liberado com
+/// `_freeRustString` após a conversão para `String`.
 ///
 /// {@category FFI Structs}
 final class FfiPaymentResult extends ffi.Struct {
-  /// Status da transação.
-  ///
-  /// - `0`: Transação aprovada
-  /// - `1`: Transação negada
-  /// - Outros valores: Erros diversos
+  /// Código de status bruto. `0` indica aprovação.
   @ffi.Int32()
   external int status;
 
-  /// Score de risco calculado pelo motor antifraude (0.0 a 1.0).
-  ///
-  /// Valores mais altos indicam menor risco. Este valor pode ser
-  /// multiplicado por 100 para exibir como porcentagem.
+  /// Score de risco normalizado (0.0 a 1.0) calculado em Rust.
   @ffi.Double()
   external double riskScore;
 
-  /// Ponteiro para mensagem descritiva alocada em Rust.
-  ///
-  /// **ATENÇÃO**: Deve ser liberado com `free_rust_string` após o uso.
+  /// Ponteiro UTF-8 para mensagem detalhada; libere com `_freeRustString`.
   external ffi.Pointer<pkg_ffi.Utf8> message;
 }
 
-/// Detalhamento de taxas cobradas em uma transação.
+/// Estrutura C exposta por `calculate_fees` para detalhar custos.
 ///
-/// Corresponde ao struct Rust `FeeBreakdown`. Contém informações sobre
-/// taxas fixas, percentuais e o valor líquido que o comerciante receberá.
-///
-/// ## Rust Backend Correspondence
-///
-/// ```rust
-/// #[repr(C)]
-/// pub struct FeeBreakdown {
-///     pub fixed_fee: f64,
-///     pub percentage_fee: f64,
-///     pub total_fee: f64,
-///     pub net_amount: f64,
-/// }
-/// ```
+/// Espelha `FeeBreakdown` em Rust, contendo taxas fixas, percentuais e
+/// o valor líquido calculado.
 ///
 /// {@category FFI Structs}
 final class FfiFeeBreakdown extends ffi.Struct {
-  /// Taxa fixa cobrada (em reais), independente do valor da transação.
+  /// Taxa fixa aplicada à transação.
   @ffi.Double()
   external double fixedFee;
 
-  /// Taxa percentual aplicada sobre o valor da transação.
-  ///
-  /// Exemplo: Se a transação é R$ 100 e a taxa é 2.9%, este valor será R$ 2.90.
+  /// Parcela correspondente ao percentual cobrado.
   @ffi.Double()
   external double percentageFee;
 
-  /// Soma de todas as taxas (fixedFee + percentageFee).
+  /// Soma total das taxas.
   @ffi.Double()
   external double totalFee;
 
-  /// Valor líquido que o comerciante receberá após dedução das taxas.
-  ///
-  /// Calculado como: `amount - totalFee`
+  /// Valor líquido entregue ao comerciante.
   @ffi.Double()
   external double netAmount;
 }
 
-/// Resultado da validação de um número de cartão de crédito.
+/// Estrutura nativa retornada por `validate_card_number`.
 ///
-/// Contém informações sobre a validade do cartão (via algoritmo de Luhn)
-/// e identificação da bandeira baseado no BIN (Bank Identification Number).
-///
-/// ## Rust Backend Correspondence
-///
-/// ```rust
-/// #[repr(C)]
-/// pub struct CardValidation {
-///     pub is_valid: i32,
-///     pub card_type: *mut c_char,
-///     pub message: *mut c_char,
-/// }
-/// ```
-///
-/// ## Memory Safety
-///
-/// Os campos `card_type` e `message` são ponteiros alocados em Rust
-/// e devem ser liberados com `free_card_validation` após o uso.
+/// Indica se um cartão passou no algoritmo de Luhn, a bandeira inferida e
+/// mensagens de diagnóstico. Use `_freeCardValidation` para liberar memória
+/// depois de converter os ponteiros para `String`.
 ///
 /// {@category FFI Structs}
 final class FfiCardValidation extends ffi.Struct {
-  /// Indicador de validade do cartão.
-  ///
-  /// - `1`: Cartão válido (passou no algoritmo de Luhn)
-  /// - `0`: Cartão inválido
+  /// `1` quando o cartão é válido, `0` caso contrário.
   @ffi.Int32()
   external int isValid;
 
-  /// Ponteiro para string identificando a bandeira do cartão.
-  ///
-  /// Exemplos: "Visa", "Mastercard", "Elo", "American Express"
+  /// Ponteiro UTF-8 com a bandeira detectada.
   external ffi.Pointer<pkg_ffi.Utf8> cardType;
 
-  /// Ponteiro para mensagem descritiva sobre a validação.
+  /// Ponteiro UTF-8 com mensagem explicativa.
   external ffi.Pointer<pkg_ffi.Utf8> message;
 }
 
@@ -252,56 +162,20 @@ typedef _CalculateBatchStatsDart = ffi.Pointer<ffi.Char> Function(
 // Gateway Principal
 // ============================================================================
 
-/// Gateway principal para comunicação entre Flutter e o motor Rust.
+/// Ponto de entrada para o motor de pagamentos nativo.
 ///
-/// Esta classe encapsula toda a lógica FFI, carregamento de biblioteca nativa,
-/// e conversão entre tipos Dart e C. Fornece uma API type-safe e idiomática
-/// para Dart, abstraindo os detalhes de baixo nível do FFI.
-///
-/// ## Inicialização
-///
-/// O gateway tenta carregar a biblioteca nativa no construtor. Se falhar,
-/// todas as chamadas retornarão valores de erro sem crashar a aplicação.
-///
-/// Verifique [isInitialized] antes de operações críticas:
-///
-/// ```dart
-/// final gateway = RustPaymentGateway();
-/// if (!gateway.isInitialized) {
-///   print('Erro: ${gateway.initializationError}');
-///   return;
-/// }
-/// ```
-///
-/// ## Thread Safety
-///
-/// O backend Rust usa operações atômicas thread-safe. É seguro chamar
-/// métodos deste gateway de múltiplas isolates Dart.
-///
-/// ## Lifecycle
-///
-/// A biblioteca nativa permanece carregada durante toda a vida da aplicação.
-/// Não há necessidade de dispose ou cleanup manual.
+/// Carrega a biblioteca dinâmica do Rust, registra as funções FFI e expõe
+/// métodos de mais alto nível prontos para uso em Flutter. Consulte
+/// [isInitialized] antes de fazer chamadas para garantir que o native binding
+/// foi carregado com sucesso.
 ///
 /// {@category Payment Gateway}
 /// {@category FFI}
 class RustPaymentGateway {
-  /// Cria uma nova instância do gateway e carrega a biblioteca Rust.
+  /// Tenta carregar a biblioteca Rust e mapear as funções expostas.
   ///
-  /// O carregamento da biblioteca é feito no construtor. Se falhar,
-  /// [isInitialized] será `false` e [initializationError] conterá
-  /// informações sobre o erro.
-  ///
-  /// ## Exemplo
-  ///
-  /// ```dart
-  /// final gateway = RustPaymentGateway();
-  /// if (gateway.isInitialized) {
-  ///   print('✓ Motor de pagamentos carregado');
-  /// } else {
-  ///   print('✗ Falha: ${gateway.initializationError}');
-  /// }
-  /// ```
+  /// Em caso de falha, [isInitialized] permanece `false` e
+  /// [initializationError] descreve o motivo.
   RustPaymentGateway() {
     try {
       _library = _openLibrary();
@@ -353,51 +227,11 @@ class RustPaymentGateway {
   /// Será `null` se [isInitialized] for `true`.
   String? get initializationError => _initializationError;
 
-  /// Processa um pagamento através do motor antifraude Rust.
+  /// Solicita autorização de pagamento ao motor Rust.
   ///
-  /// Envia os dados da transação para análise de risco e retorna
-  /// a decisão de aprovação/negação junto com o score calculado.
-  ///
-  /// ## Parâmetros
-  ///
-  /// - [amount]: Valor base da transação em reais (ex: 100.50)
-  /// - [tip]: Valor de gorjeta em reais (ex: 10.0)
-  /// - [methodIndex]: Método de pagamento:
-  ///   - `0`: NFC/Aproximação (menor risco)
-  ///   - `1`: Chip EMV (risco médio-baixo)
-  ///   - `2`: Tarja magnética (risco médio-alto)
-  ///   - `3`: Digitação manual (maior risco)
-  ///
-  /// ## Retorno
-  ///
-  /// Retorna um [RustPaymentOutcome] contendo:
-  /// - `approved`: Booleano indicando aprovação
-  /// - `riskScore`: Score de 0.0 a 1.0 (maior = mais seguro)
-  /// - `message`: Mensagem descritiva do backend
-  /// - `methodDescription`: Descrição textual do método usado
-  ///
-  /// ## Exemplo
-  ///
-  /// ```dart
-  /// final outcome = gateway.authorizePayment(
-  ///   amount: 150.00,
-  ///   tip: 0.0,
-  ///   methodIndex: 1, // Chip
-  /// );
-  ///
-  /// if (outcome.approved) {
-  ///   print('✓ Transação aprovada!');
-  ///   print('  Score: ${(outcome.riskScore * 100).toStringAsFixed(1)}%');
-  /// } else {
-  ///   print('✗ Transação negada: ${outcome.message}');
-  /// }
-  /// ```
-  ///
-  /// ## Rust Backend
-  ///
-  /// Chama a função `process_payment` que implementa um motor de risco
-  /// simplificado para fins educacionais. Em produção, esta função se
-  /// comunicaria com serviços de adquirência reais (Stone, Cielo, etc.).
+  /// Retorna um [RustPaymentOutcome] com aprovação, score de risco e mensagem
+  /// explicativa. O [methodIndex] segue o mapeamento nativo (`0` NFC, `1` Chip,
+  /// `2` Tarja, `3` Manual).
   ///
   /// {@category Payment Operations}
   RustPaymentOutcome authorizePayment({
@@ -429,49 +263,11 @@ class RustPaymentGateway {
     );
   }
 
-  /// Valida um número de cartão de crédito usando o algoritmo de Luhn.
+  /// Valida um número de cartão no backend Rust usando Luhn e identificação de bandeira.
   ///
-  /// Verifica a integridade matemática do número do cartão e identifica
-  /// a bandeira baseado no BIN (primeiros dígitos).
-  ///
-  /// ## Parâmetros
-  ///
-  /// - [cardNumber]: String contendo o número do cartão. Pode incluir
-  ///   espaços ou hífens que serão automaticamente removidos.
-  ///
-  /// ## Retorno
-  ///
-  /// Retorna um [CardValidationResult] com:
-  /// - `isValid`: `true` se passou no algoritmo de Luhn
-  /// - `cardType`: Bandeira identificada (Visa, Mastercard, etc.)
-  /// - `message`: Descrição detalhada do resultado
-  ///
-  /// ## Exemplo
-  ///
-  /// ```dart
-  /// final validation = gateway.validateCard('4532 0151 1283 0366');
-  ///
-  /// if (validation.isValid) {
-  ///   print('✓ Cartão ${validation.cardType} válido');
-  /// } else {
-  ///   print('✗ ${validation.message}');
-  /// }
-  /// ```
-  ///
-  /// ## Segurança e PCI-DSS
-  ///
-  /// **AVISO**: Esta validação é apenas educacional. Em ambiente de produção:
-  /// - Nunca armazene números de cartão completos
-  /// - Use tokenização fornecida pelo adquirente
-  /// - Siga todas as normas PCI-DSS
-  /// - Processe dados sensíveis apenas em ambientes certificados
-  ///
-  /// ## Rust Backend
-  ///
-  /// Chama `validate_card_number` que implementa:
-  /// 1. Algoritmo de Luhn para validação matemática
-  /// 2. Identificação de bandeira via BIN ranges
-  /// 3. Validação de comprimento (13-19 dígitos)
+  /// Limpa espaços e hífens automaticamente e retorna um [CardValidationResult]
+  /// com status, bandeira e mensagem. Destina-se a testes e protótipos; para
+  /// produção siga as exigências PCI-DSS.
   ///
   /// {@category Card Validation}
   /// {@category Security}
@@ -504,62 +300,10 @@ class RustPaymentGateway {
     }
   }
 
-  /// Calcula o detalhamento de taxas para uma transação.
+  /// Calcula taxas e valor líquido da transação conforme regras do backend Rust.
   ///
-  /// As taxas variam baseado no método de pagamento, refletindo o custo
-  /// operacional e o risco de cada modalidade.
-  ///
-  /// ## Parâmetros
-  ///
-  /// - [amount]: Valor bruto da transação em reais
-  /// - [methodIndex]: Método de pagamento (0-3)
-  ///
-  /// ## Tabela de Taxas
-  ///
-  /// | Método       | Taxa %  | Taxa Fixa |
-  /// |--------------|---------|-----------|
-  /// | NFC/Tap (0)  | 2.5%    | R$ 0.10   |
-  /// | Chip (1)     | 2.9%    | R$ 0.15   |
-  /// | Tarja (2)    | 3.5%    | R$ 0.20   |
-  /// | Manual (3)   | 4.5%    | R$ 0.30   |
-  ///
-  /// ## Retorno
-  ///
-  /// Retorna um [FeeBreakdownResult] contendo:
-  /// - `fixedFee`: Taxa fixa em reais
-  /// - `percentageFee`: Taxa percentual calculada
-  /// - `totalFee`: Soma de todas as taxas
-  /// - `netAmount`: Valor líquido para o comerciante
-  ///
-  /// ## Exemplo
-  ///
-  /// ```dart
-  /// final fees = gateway.calculateTransactionFees(
-  ///   amount: 1000.00,
-  ///   methodIndex: 1, // Chip: 2.9% + R$ 0.15
-  /// );
-  ///
-  /// print('Valor bruto: R\$ ${fees.grossAmount.toStringAsFixed(2)}');
-  /// print('Taxa fixa: R\$ ${fees.fixedFee.toStringAsFixed(2)}');
-  /// print('Taxa %: R\$ ${fees.percentageFee.toStringAsFixed(2)}');
-  /// print('Total taxas: R\$ ${fees.totalFee.toStringAsFixed(2)}');
-  /// print('Você recebe: R\$ ${fees.netAmount.toStringAsFixed(2)}');
-  /// // Saída:
-  /// // Valor bruto: R$ 1000.00
-  /// // Taxa fixa: R$ 0.15
-  /// // Taxa %: R$ 29.00
-  /// // Total taxas: R$ 29.15
-  /// // Você recebe: R$ 970.85
-  /// ```
-  ///
-  /// ## Rust Backend
-  ///
-  /// Chama `calculate_fees` que aplica a fórmula:
-  /// ```
-  /// taxa_percentual = amount * percentual
-  /// taxa_total = taxa_percentual + taxa_fixa
-  /// valor_liquido = amount - taxa_total
-  /// ```
+  /// Usa [methodIndex] para definir as alíquotas aplicadas e retorna um
+  /// [FeeBreakdownResult] com os valores fixos, percentuais e montante líquido.
   ///
   /// {@category Fee Calculation}
   /// {@category Financial}
@@ -588,42 +332,10 @@ class RustPaymentGateway {
     );
   }
 
-  /// Gera um ID único para uma transação.
+  /// Gera um identificador único de transação no backend Rust.
   ///
-  /// Utiliza um contador atômico thread-safe combinado com timestamp Unix
-  /// para garantir unicidade mesmo em cenários concorrentes.
-  ///
-  /// ## Formato do ID
-  ///
-  /// ```
-  /// TXN-{unix_timestamp}-{counter_6_digits}
-  /// ```
-  ///
-  /// Exemplo: `TXN-1733789456-000042`
-  ///
-  /// ## Retorno
-  ///
-  /// String contendo o ID único gerado.
-  ///
-  /// ## Exemplo
-  ///
-  /// ```dart
-  /// final txnId = gateway.generateUniqueTransactionId();
-  /// print('Nova transação: $txnId');
-  /// // Saída: Nova transação: TXN-1733789456-000001
-  /// ```
-  ///
-  /// ## Thread Safety
-  ///
-  /// Esta função é thread-safe e pode ser chamada de múltiplas isolates
-  /// simultaneamente. O backend Rust usa `AtomicU64` para sincronização.
-  ///
-  /// ## Rust Backend
-  ///
-  /// Chama `generate_transaction_id` que:
-  /// 1. Obtém timestamp Unix atual
-  /// 2. Incrementa contador atômico global
-  /// 3. Formata string com zero-padding
+  /// O formato usa o prefixo `TXN-`, timestamp Unix e contador sequencial.
+  /// Seguro para chamadas concorrentes.
   ///
   /// {@category Transaction Management}
   /// {@category Utilities}
@@ -640,46 +352,11 @@ class RustPaymentGateway {
     }
   }
 
-  /// Calcula estatísticas agregadas de um lote de transações.
+  /// Calcula estatísticas agregadas para um lote de valores via Rust.
   ///
-  /// Processa múltiplas transações de uma vez e retorna métricas úteis
-  /// para relatórios e análise de tendências.
-  ///
-  /// ## Parâmetros
-  ///
-  /// - [amounts]: Lista de valores de transações em reais
-  ///
-  /// ## Retorno
-  ///
-  /// String JSON contendo:
-  /// - `total`: Soma de todas as transações
-  /// - `average`: Média aritmética
-  /// - `max`: Maior valor
-  /// - `min`: Menor valor
-  /// - `count`: Número de transações
-  ///
-  /// ## Exemplo
-  ///
-  /// ```dart
-  /// final stats = gateway.calculateBatchStatistics([
-  ///   100.0, 250.50, 75.30, 500.0, 150.25
-  /// ]);
-  ///
-  /// print(stats);
-  /// // Saída: {"total":1076.05,"average":215.21,"max":500.00,"min":75.30,"count":5}
-  /// ```
-  ///
-  /// ## Performance
-  ///
-  /// O cálculo é feito em Rust, sendo significativamente mais rápido que
-  /// implementação equivalente em Dart para grandes volumes (>1000 items).
-  ///
-  /// ## Rust Backend
-  ///
-  /// Chama `calculate_batch_stats` que:
-  /// 1. Recebe ponteiro para array de doubles
-  /// 2. Calcula métricas em uma única passada
-  /// 3. Serializa resultado como JSON
+  /// Retorna uma string JSON com soma, média, valores extremos e quantidade.
+  /// Caso o motor não esteja inicializado ou a lista esteja vazia, devolve um
+  /// JSON com erro.
   ///
   /// {@category Analytics}
   /// {@category Batch Operations}
@@ -713,30 +390,9 @@ class RustPaymentGateway {
   // Métodos Auxiliares Privados
   // ==========================================================================
 
-  /// Carrega a biblioteca dinâmica Rust baseado na plataforma atual.
+  /// Carrega a biblioteca dinâmica do Rust conforme a plataforma nativa.
   ///
-  /// ## Nomes de Biblioteca por Plataforma
-  ///
-  /// - **Linux/Android**: `librust_payment_engine.so`
-  /// - **Windows**: `rust_payment_engine.dll`
-  /// - **macOS/iOS**: `librust_payment_engine.dylib`
-  ///
-  /// ## Localização
-  ///
-  /// A biblioteca deve estar em um dos seguintes locais:
-  /// 1. Diretório de trabalho atual
-  /// 2. System library path (LD_LIBRARY_PATH, PATH, DYLD_LIBRARY_PATH)
-  /// 3. Para Flutter: Empacotada no bundle da aplicação
-  ///
-  /// ## Compilação
-  ///
-  /// Compile a biblioteca antes de executar:
-  /// ```bash
-  /// cd rust_payment_engine
-  /// cargo build --release
-  /// ```
-  ///
-  /// A biblioteca estará em `target/release/`.
+  /// Lança [UnsupportedError] se a plataforma não tiver binário configurado.
   ffi.DynamicLibrary _openLibrary() {
     if (Platform.isAndroid || Platform.isLinux) {
       return ffi.DynamicLibrary.open('librust_payment_engine.so');
@@ -783,15 +439,9 @@ class RustPaymentGateway {
 // Dart Value Objects (API Type-Safe)
 // ============================================================================
 
-/// Resultado de uma operação de pagamento em formato Dart idiomático.
+/// Resultado de pagamento exposto para o código Dart.
 ///
-/// Esta classe encapsula os dados retornados do backend Rust em um
-/// formato type-safe e conveniente para uso em Dart/Flutter.
-///
-/// ## Diferença entre FfiPaymentResult e RustPaymentOutcome
-///
-/// - `FfiPaymentResult`: Struct FFI de baixo nível que espelha o layout C
-/// - `RustPaymentOutcome`: Value object Dart de alto nível, imutável e idiomático
+/// Empacota o struct FFI retornado pelo Rust em um objeto imutável e idiomático.
 ///
 /// {@category Payment Operations}
 class RustPaymentOutcome {
@@ -861,9 +511,7 @@ class CardValidationResult {
       ')';
 }
 
-/// Detalhamento de taxas de uma transação.
-///
-/// Fornece visibilidade completa sobre custos operacionais.
+/// Detalhamento de taxas calculado pelo backend Rust.
 ///
 /// {@category Fee Calculation}
 class FeeBreakdownResult {

@@ -1,13 +1,7 @@
-/// Terminal de Pagamentos - Demonstração Flutter + Rust FFI
+/// Demonstração de terminal de pagamentos Flutter com backend Rust via FFI.
 ///
-/// Este aplicativo demonstra a integração entre Flutter e Rust usando dart:ffi,
-/// implementando um terminal de pagamentos simplificado com recursos de:
-///
-/// - Processamento de transações via motor Rust
-/// - Validação de cartões com algoritmo de Luhn
-/// - Cálculo de taxas em tempo real
-/// - Geração de IDs únicos thread-safe
-/// - Análise estatística de lotes de transações
+/// O app reúne processamento de transações, validação de cartões, cálculo de
+/// taxas e geração de estatísticas usando as APIs expostas pelo gateway FFI.
 ///
 /// {@category Demo Application}
 library;
