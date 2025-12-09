@@ -8,12 +8,21 @@ part of '../../rust_gateway.dart';
 /// foi carregado com sucesso.
 ///
 /// {@category Payment Gateway}
-/// {@category FFI}
+
 class RustPaymentGateway {
-  /// Tenta carregar a biblioteca Rust e mapear as funções expostas.
-  ///
-  /// Em caso de falha, [isInitialized] permanece `false` e
-  /// [initializationError] descreve o motivo.
+  bool _initialized = false;
+  String? _initializationError;
+
+  late final ffi.DynamicLibrary _library;
+  late final _ProcessPaymentDart _processPayment;
+  late final _FreeStringDart _freeRustString;
+  late final _DescribeMethodDart _describeMethod;
+  late final _ValidateCardDart _validateCard;
+  late final _FreeCardValidationDart _freeCardValidation;
+  late final _CalculateFeesDart _calculateFees;
+  late final _GenerateTransactionIdDart _generateTxnId;
+  late final _CalculateBatchStatsDart _calculateBatchStats;
+
   RustPaymentGateway() {
     try {
       _library = _openLibrary();
@@ -42,19 +51,6 @@ class RustPaymentGateway {
     }
   }
 
-  late final ffi.DynamicLibrary _library;
-  late final _ProcessPaymentDart _processPayment;
-  late final _FreeStringDart _freeRustString;
-  late final _DescribeMethodDart _describeMethod;
-  late final _ValidateCardDart _validateCard;
-  late final _FreeCardValidationDart _freeCardValidation;
-  late final _CalculateFeesDart _calculateFees;
-  late final _GenerateTransactionIdDart _generateTxnId;
-  late final _CalculateBatchStatsDart _calculateBatchStats;
-
-  bool _initialized = false;
-  String? _initializationError;
-
   /// Indica se a biblioteca Rust foi carregada com sucesso.
   ///
   /// Se `false`, todas as operações retornarão valores de erro.
@@ -72,6 +68,10 @@ class RustPaymentGateway {
   /// `2` Tarja, `3` Manual).
   ///
   /// {@category Payment Operations}
+    /// Tenta carregar a biblioteca Rust e mapear as funções expostas.
+  ///
+  /// Em caso de falha, [isInitialized] permanece `false` e
+  /// [initializationError] descreve o motivo.
   RustPaymentOutcome authorizePayment({
     required double amount,
     required double tip,
