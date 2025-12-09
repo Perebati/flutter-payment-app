@@ -71,3 +71,29 @@ A comunicação entre Flutter e Rust acontece da seguinte forma:
 4.  **Retorno**: O Rust retorna uma struct `PaymentResult` (status, risco, mensagem) que é convertida de volta para objetos Dart.
 
 > **Nota:** A função `free_rust_string` é utilizada para garantir que a memória alocada pelo Rust (para strings de mensagem) seja liberada corretamente, evitando memory leaks.
+
+## Arquitetura do Projeto
+
+```
+┌─────────────────────────────────────────┐
+│         Flutter/Dart Frontend           │
+│  ┌─────────────────────────────────┐   │
+│  │       main.dart (UI)             │   │
+│  └──────────────┬──────────────────┘   │
+│                 │ Chama                 │
+│  ┌──────────────▼──────────────────┐   │
+│  │  rust_gateway.dart (FFI Bridge) │   │
+│  └──────────────┬──────────────────┘   │
+└─────────────────┼───────────────────────┘
+                  │ dart:ffi
+┌─────────────────▼───────────────────────┐
+│     Rust Backend (Native Library)       │
+│  ┌─────────────────────────────────┐   │
+│  │  • process_payment()             │   │
+│  │  • validate_card_number()        │   │
+│  │  • calculate_fees()              │   │
+│  │  • generate_transaction_id()     │   │
+│  │  • calculate_batch_stats()       │   │
+│  └─────────────────────────────────┘   │
+└─────────────────────────────────────────┘
+```
