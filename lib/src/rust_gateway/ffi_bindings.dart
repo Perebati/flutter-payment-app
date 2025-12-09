@@ -1,4 +1,4 @@
-part of rust_gateway;
+part of '../../rust_gateway.dart';
 
 /// Layout nativo retornado por `process_payment` no lado Rust.
 ///

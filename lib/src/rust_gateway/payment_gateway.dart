@@ -1,4 +1,4 @@
-part of rust_gateway;
+part of '../../rust_gateway.dart';
 
 /// Ponto de entrada para o motor de pagamentos nativo.
 ///

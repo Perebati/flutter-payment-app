@@ -1,4 +1,4 @@
-part of rust_gateway;
+part of '../../rust_gateway.dart';
 
 /// Resultado de pagamento exposto para o código Dart.
 ///
