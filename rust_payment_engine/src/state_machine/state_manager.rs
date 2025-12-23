@@ -30,6 +30,16 @@ pub struct StateManager {
     state_sender: mpsc::UnboundedSender<StateChangeEvent>,
 }
 
+impl Clone for StateManager {
+    fn clone(&self) -> Self {
+        Self {
+            current_state: Arc::clone(&self.current_state),
+            current_state_type: Arc::clone(&self.current_state_type),
+            state_sender: self.state_sender.clone(),
+        }
+    }
+}
+
 impl StateManager {
     /// Cria novo StateManager com estado inicial
     pub fn new(
@@ -47,40 +57,44 @@ impl StateManager {
         (manager, rx)
     }
     
-    /// Executa ação em estado ESPECÍFICO
+    /// API SIMPLIFICADA - Executa ação descobrindo automaticamente o estado atual
     /// 
-    /// Este método é 100% genérico:
-    /// - S = tipo do estado (AwaitingInfo, EMVPayment, etc.)
-    /// - A = tipo da ação (AwaitingInfoAction, EmvPaymentAction, etc.)
-    /// - executor = closure que sabe como executar a ação
+    /// Uso:
+    /// ```
+    /// manager.execute(AwaitingInfoAction::SetAmount { amount: 100.0 }).await?;
+    /// ```
     /// 
-    /// O ESTADO decide se transiciona e CONSTRÓI o próximo estado!
-    pub async fn execute_action<S, A, F>(
-        &self,
-        action: A,
-        executor: F,
-    ) -> Result<String>
+    /// O StateManager descobre qual é o estado atual e tenta executar a ação.
+    /// Se a ação não for compatível com o estado atual, retorna erro.
+    /// 
+    /// TOTALMENTE GENÉRICO - Não conhece nenhum estado específico!
+    pub async fn execute<A>(&self, action: A) -> Result<String>
     where
-        S: 'static + Send + Sync,
-        F: FnOnce(&mut S, A) -> Result<Option<(StateType, Box<dyn std::any::Any + Send + Sync>)>>,
+        A: 'static,
     {
+        // Descobre qual é o estado atual
+        let current_type = *self.current_state_type.read().await;
+        
+        // Busca a função de dispatch no registry
+        let dispatch_fn = super::registry::get_dispatch_fn(current_type)
+            .ok_or_else(|| anyhow::anyhow!("Estado não registrado: {:?}", current_type))?;
+        
         let mut state_guard = self.current_state.write().await;
+        let action_boxed = Box::new(action) as Box<dyn std::any::Any>;
         
-        // Downcasta para o tipo específico
-        let state = state_guard
-            .downcast_mut::<S>()
-            .ok_or_else(|| anyhow::anyhow!("Estado inválido para esta ação"))?;
-        
-        // Executa ação - O ESTADO decide tudo!
-        let transition = executor(state, action)?;
+        // Executa usando a função registrada
+        let transition = dispatch_fn(&mut *state_guard, action_boxed)?;
         
         // Se houver transição, SUBSTITUI estado
         if let Some((new_type, new_state)) = transition {
+            // Captura o tipo do estado ANTES de modificar
+            let old_type = *self.current_state_type.read().await;
+            
             *state_guard = new_state;
             *self.current_state_type.write().await = new_type;
             
-            // Notifica Flutter
-            self.notify_state_change(new_type).await?;
+            // Notifica Flutter com o estado correto
+            self.notify_state_change(old_type, new_type).await?;
             
             Ok(format!("Transicionado para {:?}", new_type))
         } else {
@@ -108,10 +122,10 @@ impl StateManager {
     }
     
     /// Notifica Flutter sobre mudança de estado
-    async fn notify_state_change(&self, new_state: StateType) -> Result<()> {
+    async fn notify_state_change(&self, from_state: StateType, to_state: StateType) -> Result<()> {
         let event = StateChangeEvent {
-            from_state: *self.current_state_type.read().await,
-            to_state: new_state,
+            from_state,
+            to_state,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
         

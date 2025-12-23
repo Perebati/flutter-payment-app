@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Estados possíveis da máquina de estados
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum StateType {
     AwaitingInfo,
     EMVPayment,
