@@ -3,31 +3,44 @@
 /// Gerencia as ações do estado EMVPayment
 library;
 
+import 'package:flutter_payment_app/src/app/services/rust_payment_service.dart';
+
 class PaymentProcessingService {
+  final _rustService = RustPaymentService();
+
   /// Inicia o processamento do pagamento EMV
   Future<String> processPayment() async {
-    // TODO: Chamar função Rust via FRB
-    // return await processPayment();
-    
-    // Simulação temporária
-    await Future.delayed(const Duration(seconds: 2));
-    return 'Processamento iniciado';
+    try {
+      return await _rustService.processPayment();
+    } catch (e) {
+      throw Exception('Erro ao processar pagamento: $e');
+    }
   }
   
   /// Completa o pagamento e retorna o resultado
   Future<PaymentResult> completePayment() async {
-    // TODO: Chamar função Rust via FRB
-    // final result = await completePayment();
-    // return PaymentResult(...);
-    
-    // Simulação temporária
-    await Future.delayed(const Duration(seconds: 1));
-    final now = DateTime.now();
-    return PaymentResult(
-      transactionId: 'TXN${now.millisecondsSinceEpoch}',
-      authorizationCode: 'AUTH${now.millisecondsSinceEpoch % 100000}',
-      timestamp: now.toIso8601String(),
-    );
+    try {
+      // Simula tempo de processamento
+      await Future.delayed(const Duration(seconds: 1));
+      
+      final now = DateTime.now();
+      final transactionId = 'TXN${now.millisecondsSinceEpoch}';
+      final authorizationCode = 'AUTH${now.millisecondsSinceEpoch % 100000}';
+      
+      // Chama a API Rust para completar o pagamento
+      await _rustService.completePayment(
+        transactionId: transactionId,
+        authorizationCode: authorizationCode,
+      );
+      
+      return PaymentResult(
+        transactionId: transactionId,
+        authorizationCode: authorizationCode,
+        timestamp: now.toIso8601String(),
+      );
+    } catch (e) {
+      throw Exception('Erro ao completar pagamento: $e');
+    }
   }
 }
 

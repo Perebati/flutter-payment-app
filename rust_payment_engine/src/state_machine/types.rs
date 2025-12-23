@@ -20,6 +20,7 @@ pub struct StateChangeEvent {
 /// 
 /// Cada estado tem suas ações, mas precisamos de um tipo unificado
 /// para o StateManager ser genérico
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StateAction {
     /// Ações do estado AwaitingInfo

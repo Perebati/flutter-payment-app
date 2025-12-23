@@ -1,8 +1,9 @@
 mod state_trait;
-mod states;
+pub mod states;
 mod state_manager;
-mod types;
+pub mod types;
 mod registry;
+mod api;
 
 #[cfg(test)]
 mod state_manager_tests;
@@ -12,3 +13,4 @@ pub use states::*;
 pub use state_manager::*;
 pub use types::*;
 pub use registry::initialize_registry;
+pub use api::PaymentStateApi;

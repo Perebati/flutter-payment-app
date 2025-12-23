@@ -24,6 +24,7 @@ pub enum EmvPaymentAction {
 // ==================== ESTADO ====================
 
 /// Estado de processamento do pagamento EMV
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct EMVPayment {
     pub payment_info: PaymentInfo,

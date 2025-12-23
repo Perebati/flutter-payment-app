@@ -12,6 +12,7 @@ pub enum PaymentSuccessAction {
 }
 
 /// Estado final - pagamento concluído com sucesso
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PaymentSuccess {
     pub payment_info: PaymentInfo,

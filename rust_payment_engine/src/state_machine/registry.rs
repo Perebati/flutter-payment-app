@@ -14,6 +14,7 @@ type DispatchFn = fn(
 static STATE_REGISTRY: OnceLock<HashMap<StateType, DispatchFn>> = OnceLock::new();
 
 /// Registra um estado no registry
+#[allow(dead_code)]
 pub fn register_state(state_type: StateType, dispatch_fn: DispatchFn) {
     STATE_REGISTRY.get_or_init(|| {
         let mut map = HashMap::new();
@@ -28,6 +29,7 @@ pub fn get_dispatch_fn(state_type: StateType) -> Option<DispatchFn> {
 }
 
 /// Inicializa o registry com todos os estados
+#[allow(dead_code)]
 pub fn initialize_registry() {
     use super::states::*;
     

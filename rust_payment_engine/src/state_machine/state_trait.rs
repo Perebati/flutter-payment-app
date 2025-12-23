@@ -7,6 +7,8 @@ use super::StateType;
 /// 
 /// Quando há transição, o estado atual constrói o próximo estado.
 /// StateManager NUNCA constrói estados - apenas armazena e notifica.
+/// 
+#[allow(dead_code)]
 pub trait PaymentState<Action>: Send + Sync {
     /// Executa ação e CONSTRÓI próximo estado se houver transição
     /// 

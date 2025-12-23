@@ -1,0 +1,10 @@
+# Configuração do Flutter Rust Bridge
+rust_input: crate::api
+dart_output: ../lib/bridge_generated.dart
+c_output: ../lib/bridge_generated.h
+rust_root: .
+dart_format_line_length: 120
+llvm_path:
+  - /usr/lib/llvm-14
+  - /usr/lib/llvm-15
+  - /usr/lib/llvm-16

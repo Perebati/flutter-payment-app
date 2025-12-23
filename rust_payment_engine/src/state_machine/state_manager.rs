@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use super::{StateType, StateChangeEvent};
 
+
 /// ===============================================================================
 /// STATEMANAGER 100% GENÉRICO - ZERO LÓGICA DE ESTADOS
 /// ===============================================================================
@@ -40,6 +41,7 @@ impl Clone for StateManager {
     }
 }
 
+#[allow(dead_code)]
 impl StateManager {
     /// Cria novo StateManager com estado inicial
     pub fn new(

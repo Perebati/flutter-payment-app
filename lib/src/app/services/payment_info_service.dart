@@ -4,40 +4,39 @@
 /// Este service gerencia as ações do estado AwaitingInfo
 library;
 
+import 'package:flutter_payment_app/src/app/services/rust_payment_service.dart';
+import 'package:flutter_payment_app/bridge_generated.dart/state_machine/states/awaiting_info.dart';
+
 class PaymentInfoService {
+  final _rustService = RustPaymentService();
+
   /// Define o valor do pagamento
   Future<String> setAmount(double amount) async {
-    // TODO: Chamar função Rust via FRB
-    // return await setAmount(amount);
-    
-    // Simulação temporária
-    await Future.delayed(const Duration(milliseconds: 100));
-    if (amount <= 0) {
-      throw Exception('Valor deve ser maior que zero');
+    try {
+      return await _rustService.setAmount(amount);
+    } catch (e) {
+      throw Exception('Erro ao definir valor: $e');
     }
-    return 'Valor definido: R\$ ${amount.toStringAsFixed(2)}';
   }
   
   /// Define o tipo de pagamento
   Future<String> setPaymentType(String paymentType) async {
-    // TODO: Chamar função Rust via FRB
-    // return await setPaymentType(paymentType);
-    
-    // Simulação temporária
-    await Future.delayed(const Duration(milliseconds: 100));
-    if (paymentType != 'debit' && paymentType != 'credit') {
-      throw Exception('Tipo de pagamento inválido');
+    try {
+      final type = paymentType.toLowerCase() == 'credit' 
+          ? PaymentType.credit 
+          : PaymentType.debit;
+      return await _rustService.setPaymentType(type);
+    } catch (e) {
+      throw Exception('Erro ao definir tipo de pagamento: $e');
     }
-    return 'Tipo definido: $paymentType';
   }
   
   /// Confirma as informações e avança para processamento
   Future<String> confirmPaymentInfo() async {
-    // TODO: Chamar função Rust via FRB
-    // return await confirmPaymentInfo();
-    
-    // Simulação temporária
-    await Future.delayed(const Duration(milliseconds: 200));
-    return 'Informações confirmadas, transitando para EMVPayment';
+    try {
+      return await _rustService.confirmInfo();
+    } catch (e) {
+      throw Exception('Erro ao confirmar informações: $e');
+    }
   }
 }

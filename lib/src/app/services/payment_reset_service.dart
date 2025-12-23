@@ -1,14 +1,17 @@
 /// Service para gerenciar resets e reinicializações
 library;
 
+import 'package:flutter_payment_app/src/app/services/rust_payment_service.dart';
+
 class PaymentResetService {
-  /// Reinicia a máquina de estados
+  final _rustService = RustPaymentService();
+
+  /// Reinicia a máquina de estados cancelando o pagamento atual
   Future<String> resetPayment() async {
-    // TODO: Chamar função Rust via FRB
-    // return await resetPayment();
-    
-    // Simulação temporária
-    await Future.delayed(const Duration(milliseconds: 100));
-    return 'Máquina de estados reiniciada';
+    try {
+      return await _rustService.cancelPayment();
+    } catch (e) {
+      throw Exception('Erro ao reiniciar pagamento: $e');
+    }
   }
 }

@@ -1,6 +1,6 @@
-mod awaiting_info;
-mod emv_payment;
-mod payment_success;
+pub mod awaiting_info;
+pub mod emv_payment;
+pub mod payment_success;
 
 // Export estados
 pub use awaiting_info::AwaitingInfo;
