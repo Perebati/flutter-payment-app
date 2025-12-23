@@ -1,99 +1,181 @@
-# Flutter Payment App
+# Flutter Payment App 💳
 
-Este projeto é uma demonstração de uma aplicação de pagamentos construída com **Flutter** para o frontend e **Rust** para o motor de regras de negócio e segurança, integrados via `dart:ffi`.
+Sistema de pagamento modular desenvolvido em Flutter com backend Rust, implementando uma **máquina de estados escalável** com eventos específicos por estado.
 
-## Pré-requisitos
+## 🎯 Características Principais
 
-Antes de começar, certifique-se de ter as seguintes ferramentas instaladas no seu ambiente:
+- ✅ **Arquitetura Escalável** - Cada estado tem apenas os eventos que fazem sentido
+- ✅ **Type-Safe** - Impossível enviar evento errado para estado errado (compile-time)
+- ✅ **Documentação Automática** - Comentários /// viram dartdoc via FRB
+- ✅ **Comunicação Bidirecional** Flutter ↔ Rust
+  - Funções específicas por estado
+  - Stream para mudanças de estado
+- ✅ **Telas Modulares** - Services separados da UI
+- ✅ **Thread-Safe** - StateManager com proteções de concorrência
 
-1.  **Flutter SDK**: [Instalação do Flutter](https://docs.flutter.dev/get-started/install)
-2.  **Rust Toolchain**: [Instalação do Rust](https://www.rust-lang.org/tools/install)
+## 🎨 Nova Arquitetura (v2)
 
-## Configuração Inicial
+### Estados com Eventos Específicos
 
-Para preparar o projeto, execute os seguintes comandos na raiz do repositório:
+```
+AwaitingInfo        EMVPayment           PaymentSuccess
+├─ SetAmount        ├─ ProcessPayment    ├─ Reset
+├─ SetPaymentType   ├─ CompletePayment   └─ (apenas 1 evento)
+└─ ConfirmInfo      └─ CancelPayment
+   (3 eventos)         (3 eventos)
+```
+
+**Vantagem:** Com 100 estados, você tem ~300 casos no total, não 10.000! 🚀
+
+### Backend Rust
+
+```
+rust_payment_engine/src/state_machine/
+├── types.rs                   # Enums de ações específicos
+├── state_trait.rs             # Trait simples (sem transition gigante)
+├── state_manager.rs           # Métodos por tipo de ação
+├── states/
+│   ├── awaiting_info.rs       # execute_action(AwaitingInfoAction)
+│   ├── emv_payment.rs         # execute_action(EmvPaymentAction)
+│   └── payment_success.rs     # execute_action(PaymentSuccessAction)
+└── api.rs                     # Funções documentadas com ///
+```
+
+### Frontend Flutter
+
+```
+lib/src/app/
+├── core/
+│   ├── state_listener.dart    # Escuta mudanças de estado
+│   └── hal_navigator.dart     # Navegação automática
+├── services/
+│   ├── payment_info_service.dart      # Lógica AwaitingInfo
+│   ├── payment_processing_service.dart # Lógica EMVPayment
+│   └── payment_reset_service.dart     # Lógica Reset
+└── screens/
+    ├── amount_screen.dart
+    ├── payment_type_screen.dart
+    ├── processing_screen.dart
+    └── receipt_screen.dart
+```
+
+## 🚀 Como Executar
+
+### Pré-requisitos
 
 ```bash
-# Baixa as dependências do Flutter
+flutter --version   # Flutter SDK 3.10+
+rustc --version     # Rust 1.70+
+```
+
+### Instalação
+
+```bash
+# 1. Clonar repositório
+git clone <repo>
+cd flutter-payment-app
+
+# 2. Gerar bindings FRB
+flutter_rust_bridge_codegen generate
+
+# 3. Instalar dependências Flutter
 flutter pub get
 
-# (Opcional) Limpa builds anteriores para garantir um ambiente limpo
-flutter clean
+# 4. Executar
+flutter run
 ```
 
-## Executando a Aplicação
+## 📚 Documentação
 
-### Linux
+### Documentos Principais
 
-No Linux, o processo de build da biblioteca Rust foi automatizado via CMake. Você **não** precisa compilar o Rust manualmente.
+- **[SPECIFIC_EVENTS_ARCHITECTURE.md](SPECIFIC_EVENTS_ARCHITECTURE.md)** - ⭐ Arquitetura completa com eventos específicos
+- **[DOCUMENTATION_GUIDE.md](DOCUMENTATION_GUIDE.md)** - Como gerar documentação FRB
+- **[REFACTORED_ARCHITECTURE.md](REFACTORED_ARCHITECTURE.md)** - Histórico da refatoração
+- **[STATE_MACHINE.md](STATE_MACHINE.md)** - Detalhes da máquina de estados
+- **[STATE_DIAGRAM.md](STATE_DIAGRAM.md)** - Diagramas de transição
 
-Basta rodar:
+### Gerar Documentação HTML
 
 ```bash
-flutter run -d linux
+# Gerar bindings Rust → Dart
+flutter_rust_bridge_codegen generate
+
+# Gerar docs HTML
+dart doc
+
+# Servir localmente
+python3 -m http.server --directory doc/api 8080
+# Abra http://localhost:8080
 ```
 
-### Outras Plataformas (Windows, macOS, Android, iOS)
+Todos os comentários `///` do Rust são convertidos automaticamente para dartdoc! 🎉
 
-⚠️ **Atenção:** A automação de build via CMake está configurada apenas para Linux no momento.
+### Instalação
 
-Se você deseja rodar em outras plataformas, será necessário:
-1.  Compilar o Rust manualmente (`cargo build --release` dentro de `rust_payment_engine/`).
-2.  Mover o binário gerado (`.dll`, `.dylib` ou `.so`) para o local apropriado onde o Flutter possa carregá-lo.
-3.  Ajustar o código em `lib/rust_gateway.dart` para garantir que o caminho de carregamento da biblioteca dinâmica esteja correto para a plataforma alvo.
+```bash
+# Dependências Flutter
+flutter pub get
 
-## Documentação do Projeto
+# Compilar Rust
+cd rust_payment_engine
+cargo build --release
+cd ..
+```
 
-O projeto utiliza o `dart doc` para gerar documentação técnica detalhada, incluindo notas sobre a integração com o backend Rust.
+### Executar
 
-Para gerar e visualizar a documentação:
+```bash
+flutter run
+```
 
-1.  Verifique as dependências e analise o código:
-    ```bash
-    dart pub get
-    dart analyze
-    ```
+## 📱 Fluxo da Aplicação
 
-2.  Gere a documentação HTML:
-    ```bash
-    dart doc .
-    ```
+1. **Tela de Valor** → Usuário digita o valor
+2. **Tela de Tipo** → Escolhe Débito/Crédito → Envia para Rust
+3. **Tela de Processamento** → Processa pagamento
+4. **Tela de Comprovante** → Exibe resultado
 
-A documentação será gerada na pasta `doc/api`. Abra o arquivo `doc/api/index.html` no seu navegador para visualizar.
+## 📚 Documentação
 
-## Arquitetura e Fluxo de Dados
+- [**ARCHITECTURE.md**](ARCHITECTURE.md) - Arquitetura completa
+- [**STATE_DIAGRAM.md**](STATE_DIAGRAM.md) - Diagramas visuais
+- [**API_EXAMPLES.md**](API_EXAMPLES.md) - Exemplos de uso
 
-A comunicação entre Flutter e Rust acontece da seguinte forma:
+## 🔌 API Principal
 
-1.  **Frontend (Flutter)**: O usuário inicia uma transação. O método `_startPayment` chama `RustPaymentGateway.authorizePayment`.
-2.  **FFI Bridge**: Os dados (valor, método, gorjeta) são passados para a camada nativa.
-3.  **Backend (Rust)**: A função `process_payment` no Rust calcula um score de risco e determina se a transação é aprovada ou recusada.
-4.  **Retorno**: O Rust retorna uma struct `PaymentResult` (status, risco, mensagem) que é convertida de volta para objetos Dart.
+```rust
+// Enviar informações
+send_payment_info(amount: f64, payment_type: String) -> Result<String>
 
-> **Nota:** A função `free_rust_string` é utilizada para garantir que a memória alocada pelo Rust (para strings de mensagem) seja liberada corretamente, evitando memory leaks.
+// Processar pagamento
+process_emv_payment() -> Result<EmvResultDto>
 
-## Arquitetura do Projeto
+// Stream de estados
+state_change_stream() -> Stream<StateChangeEventDto>
+```
+
+## 📊 Diagrama de Estados
 
 ```
-┌─────────────────────────────────────────┐
-│         Flutter/Dart Frontend           │
-│  ┌─────────────────────────────────┐   │
-│  │       main.dart (UI)             │   │
-│  └──────────────┬──────────────────┘   │
-│                 │ Chama                 │
-│  ┌──────────────▼──────────────────┐   │
-│  │  rust_gateway.dart (FFI Bridge) │   │
-│  └──────────────┬──────────────────┘   │
-└─────────────────┼───────────────────────┘
-                  │ dart:ffi
-┌─────────────────▼───────────────────────┐
-│     Rust Backend (Native Library)       │
-│  ┌─────────────────────────────────┐   │
-│  │  • process_payment()             │   │
-│  │  • validate_card_number()        │   │
-│  │  • calculate_fees()              │   │
-│  │  • generate_transaction_id()     │   │
-│  │  • calculate_batch_stats()       │   │
-│  └─────────────────────────────────┘   │
-└─────────────────────────────────────────┘
+   AwaitingInfo
+        ↓
+  send_payment_info()
+        ↓
+    EMVPayment
+        ↓
+ process_emv_payment()
+        ↓
+  PaymentSuccess
 ```
+
+## 🧪 Testes
+
+```bash
+flutter test
+cd rust_payment_engine && cargo test
+```
+
+## 📄 Licença
+
+MIT License - Veja [LICENSE](LICENSE)
